@@ -202,6 +202,16 @@ struct RootSearchView: View {
                 }
             }
 
+            // 柯林斯整句英文释义（如 "If you describe something as ephemeral, ..."）
+            if !entry.englishDef.isEmpty {
+                Text(entry.englishDef)
+                    .font(.system(size: 13))
+                    .italic()
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
             if !entry.example.isEmpty {
                 HStack(alignment: .top, spacing: 6) {
                     Image(systemName: "text.quote")
