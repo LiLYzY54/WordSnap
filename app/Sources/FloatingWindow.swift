@@ -17,6 +17,8 @@ final class FloatingWindow: NSPanel {
     private var pendingHeight: CGFloat?
     private var flushScheduled = false
     private var hideObserver: NSObjectProtocol?
+    /// kVK_Escape
+    private static let escapeKeyCode: UInt16 = 53
 
     let model = SearchModel()
 
@@ -67,11 +69,29 @@ final class FloatingWindow: NSPanel {
         ) { [weak self] _ in
             self?.orderOut(nil)
         }
+
+        // SwiftUI 的 onExitCommand 在 TextField 聚焦时被输入法机制吞掉
+        // （实测按 Esc 只会清选区/候选，回调根本不触发），Esc 收起必须
+        // 在窗口层直接拦截键码，不能依赖 SwiftUI 回调链。
+        // 仅本应用的本地事件，不影响其他应用。
+        escMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self, event.window === self, event.keyCode == Self.escapeKeyCode else {
+                return event
+            }
+            NSLog("WordSnap [esc] intercepted, hiding panel")
+            self.orderOut(nil)
+            return nil // 已消费，不再下发
+        }
     }
+
+    private var escMonitor: Any?
 
     deinit {
         if let hideObserver {
             NotificationCenter.default.removeObserver(hideObserver)
+        }
+        if let escMonitor {
+            NSEvent.removeMonitor(escMonitor)
         }
     }
 
@@ -152,6 +172,7 @@ final class FloatingWindow: NSPanel {
     override var canBecomeKey: Bool { true }
 
     func toggle() {
+        NSLog("WordSnap [toggle] visible=%d", isVisible ? 1 : 0)
         if isVisible {
             orderOut(nil)
         } else {
