@@ -23,7 +23,8 @@ struct WordEntry: Codable, Equatable {
 enum LookupError: LocalizedError {
     case network(String)
     case badResponse
-    case notFound
+    /// 词不存在；关联 suggest 接口的候选词（最多 4 个）
+    case notFound([String])
 
     var errorDescription: String? {
         switch self {
@@ -147,7 +148,7 @@ final class WordService {
 
     func lookup(_ rawWord: String) async throws -> WordEntry {
         let word = rawWord.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !word.isEmpty else { throw LookupError.notFound }
+        guard !word.isEmpty else { throw LookupError.notFound([]) }
 
         let start = Date()
 
@@ -168,7 +169,7 @@ final class WordService {
                 return entry
             } catch LookupError.notFound {
                 Self.logTiming(word: word, ms: Date().timeIntervalSince(start) * 1000, via: "direct:not-found")
-                throw LookupError.notFound
+                throw await Self.notFoundWithSuggestions(word)
             } catch {
                 // 响应解析失败（接口格式变化等）：降级走代理再试一次
             }
@@ -180,10 +181,56 @@ final class WordService {
             let entry = try Self.parse(data, word: word)
             Self.logTiming(word: word, ms: Date().timeIntervalSince(start) * 1000, via: "proxy")
             return entry
+        } catch LookupError.notFound {
+            Self.logTiming(word: word, ms: Date().timeIntervalSince(start) * 1000, via: "proxy:not-found")
+            throw await Self.notFoundWithSuggestions(word)
         } catch {
             Self.logTiming(word: word, ms: Date().timeIntervalSince(start) * 1000, via: "failed")
             throw LookupError.network("网络连接失败，请检查网络后重试")
         }
+    }
+
+    // MARK: Suggest（查无此词时的纠错候选）
+
+    private static func notFoundWithSuggestions(_ word: String) async -> LookupError {
+        .notFound(await suggestions(for: word))
+    }
+
+    /// 有道 suggest 候选词，1.5s 上限，失败静默（纠错是锦上添花，不能拖慢主流程）。
+    static func suggestions(for word: String) async -> [String] {
+        guard !word.isEmpty else { return [] }
+        var components = URLComponents(string: "https://dict.youdao.com/suggest")!
+        components.queryItems = [
+            URLQueryItem(name: "q", value: word),
+            URLQueryItem(name: "num", value: "5"),
+            URLQueryItem(name: "ver", value: "3.0"),
+            URLQueryItem(name: "doctype", value: "json"),
+            URLQueryItem(name: "le", value: "eng"),
+        ]
+        let config = URLSessionConfiguration.ephemeral
+        config.timeoutIntervalForRequest = 1.5
+        config.timeoutIntervalForResource = 1.5
+        let session = URLSession(configuration: config)
+        defer { session.invalidateAndCancel() }
+        guard let url = components.url,
+              let (data, _) = try? await session.data(from: url) else { return [] }
+        return parseSuggestions(data, excluding: word)
+    }
+
+    static func parseSuggestions(_ data: Data, excluding word: String) -> [String] {
+        struct Response: Decodable {
+            struct Entry: Decodable { var entry: String? }
+            struct Payload: Decodable { var entries: [Entry]? }
+            var data: Payload?
+        }
+        guard let response = try? JSONDecoder().decode(Response.self, from: data) else { return [] }
+        let target = word.lowercased()
+        return (response.data?.entries ?? [])
+            .compactMap { $0.entry }
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty && $0.lowercased() != target }
+            .prefix(4)
+            .map { $0 }
     }
 
     private static func logTiming(word: String, ms: Double, via: String) {
@@ -665,7 +712,7 @@ final class WordService {
             meaning = cleanHTML(decoded.simple?.custom?.first?.v ?? "")
         }
 
-        guard !meaning.isEmpty else { throw LookupError.notFound }
+        guard !meaning.isEmpty else { throw LookupError.notFound([]) }
 
         // 例句
         let example = cleanHTML(decoded.blng_sents_part?.sentencePair?.first?.sentence ?? "")

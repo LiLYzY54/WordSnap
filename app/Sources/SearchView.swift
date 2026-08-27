@@ -23,6 +23,8 @@ final class SearchModel: ObservableObject {
     @Published var phase: LookupPhase = .idle
     /// 全选信号：token 自增触发一次输入框全选（配合剪贴板预填）
     @Published var selectAllToken = 0
+    /// notFound 时的纠错候选（suggest 接口）
+    @Published var suggestions: [String] = []
     private var lastPrefilledWord: String?
 
     // 撤销窗口状态
@@ -54,12 +56,23 @@ final class SearchModel: ObservableObject {
         let word = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !word.isEmpty else { return }
         phase = .loading
+        suggestions = []
 
         do {
             phase = .loaded(try await WordService.shared.lookup(word))
+        } catch let error as LookupError {
+            if case .notFound(let candidates) = error { suggestions = candidates }
+            phase = .failed(error.localizedDescription)
         } catch {
             phase = .failed(error.localizedDescription)
         }
+    }
+
+    /// 点击纠错候选：换词立即重查
+    func lookupReplacement(_ word: String) {
+        searchText = word
+        suggestions = []
+        Task { await lookup() }
     }
 
     func save() {
@@ -245,9 +258,25 @@ struct RootSearchView: View {
                 Label(message, systemImage: "exclamationmark.triangle.fill")
                     .font(.system(size: 14, weight: .medium))
                     .foregroundStyle(.red)
-                Text("修改关键词后回车重试")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.tertiary)
+                if model.suggestions.isEmpty {
+                    Text("修改关键词后回车重试")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.tertiary)
+                } else {
+                    HStack(spacing: 6) {
+                        Text("你是不是想找：")
+                            .font(.system(size: 12))
+                            .foregroundStyle(.tertiary)
+                        ForEach(model.suggestions, id: \.self) { candidate in
+                            Button(candidate) { model.lookupReplacement(candidate) }
+                                .buttonStyle(.plain)
+                                .font(.system(size: 13, weight: .medium))
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 4)
+                                .background(.gray.opacity(0.15), in: .capsule)
+                        }
+                    }
+                }
             }
         case .saved(let total, let streak):
             VStack(spacing: 6) {

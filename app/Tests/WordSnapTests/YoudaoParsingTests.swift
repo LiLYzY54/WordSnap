@@ -63,9 +63,10 @@ final class YoudaoParsingTests: XCTestCase {
     func testEmptyMeaningThrowsNotFound() {
         let emptyResponse = #"{"simple": {"word": []}}"#
         XCTAssertThrowsError(try parse(emptyResponse)) { error in
-            guard case LookupError.notFound = error else {
+            guard case .notFound(let candidates) = error as! LookupError else {
                 return XCTFail("expected notFound, got \(error)")
             }
+            XCTAssertTrue(candidates.isEmpty, "解析层抛出的 notFound 不带候选")
         }
     }
 
