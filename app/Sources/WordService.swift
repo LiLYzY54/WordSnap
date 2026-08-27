@@ -143,11 +143,17 @@ final class WordService {
     /// Connects straight to Youdao's real IP with TLS SNI pinned to
     /// dict.youdao.com — immune to TUN fake-IP DNS. Reuses one connection
     /// (HTTP/1.1 keep-alive) so repeat lookups skip DNS + TLS handshake.
-    final class YoudaoDirectClient {
+    ///
+    /// actor 隔离：connection/connectionIP 只在 actor 内串行访问。
+    /// 此前的裸 class 里，warmUp 的后台任务和主线程的快速连查会同时
+    /// 读写 connection、各自开连接互相覆盖——教科书式 data race。
+    actor YoudaoDirectClient {
 
         static let shared = YoudaoDirectClient()
 
         private let host = "dict.youdao.com"
+        /// NWConnection 的全部回调都落在同一条串行队列上，
+        /// continuation 的 done 标记因此天然原子，无需额外加锁。
         private let queue = DispatchQueue(label: "com.wordsnap.youdao", qos: .userInitiated)
         private var connection: NWConnection?
         private var connectionIP: String?
@@ -180,14 +186,14 @@ final class WordService {
 
         /// Open the persistent connection ahead of time so the first real
         /// lookup hits a live TLS pipe instead of paying connect latency.
+        /// （shared 是进程级单例，闭包强持有无害；勿加捕获列表——
+        ///   Swift 5 检查级别下显式捕获会让 Task 失去 actor 隔离推断。）
         func warmUp() {
-            Task.detached(priority: .utility) { [weak self] in
-                guard let self else { return }
-                if self.connection == nil {
-                    let ip = Self.ipList.first ?? Self.seedIPs[0]
-                    self.connection = try? await self.openConnection(ip: ip)
-                    if self.connection != nil { self.connectionIP = ip }
-                }
+            guard connection == nil else { return }
+            let ip = Self.ipList.first ?? Self.seedIPs[0]
+            Task {
+                self.connection = try? await self.openConnection(ip: ip)
+                if self.connection != nil { self.connectionIP = ip }
             }
         }
 
