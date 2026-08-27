@@ -176,26 +176,39 @@ final class FloatingWindow: NSPanel {
         if isVisible {
             orderOut(nil)
         } else {
-            // 预热直连，让首查就命中活连接
-            Task { WordService.YoudaoDirectClient.shared.warmUp() }
-            // Every summon starts from a fresh capsule — no leftover results.
-            model.reset()
-            model.prefillFromClipboard()
-            let barHeight = Self.barOnlyHeight
-            if let screen = NSScreen.main {
-                let visibleFrame = screen.visibleFrame
-                let barFrame = NSRect(
-                    x: visibleFrame.midX - frame.width / 2,
-                    y: visibleFrame.maxY - barHeight - visibleFrame.height * Self.topInsetFraction,
-                    width: frame.width,
-                    height: barHeight
-                )
-                setFrame(barFrame, display: false)
-            }
-            applyShape(radius: Self.panelCornerRadius)
-            // Activate the app so keystrokes reach the search field.
-            NSApp.activate(ignoringOtherApps: true)
-            makeKeyAndOrderFront(nil)
+            showPanel()
         }
+    }
+
+    /// 呼出面板并直接查某个词（今日一词入口）。
+    func summonAndLookup(_ word: String) {
+        showPanel()
+        model.searchText = word
+        Task { await model.lookup() }
+    }
+
+    private func showPanel() {
+        // 预热直连，让首查就命中活连接
+        Task { WordService.YoudaoDirectClient.shared.warmUp() }
+        // Every summon starts from a fresh capsule — no leftover results.
+        model.reset()
+        model.prefillFromClipboard()
+        model.todayHint = WordService.wordOfTheDay(
+            in: (try? String(contentsOfFile: WordService.obsidianFile, encoding: .utf8)) ?? "")
+        let barHeight = Self.barOnlyHeight
+        if let screen = NSScreen.main {
+            let visibleFrame = screen.visibleFrame
+            let barFrame = NSRect(
+                x: visibleFrame.midX - frame.width / 2,
+                y: visibleFrame.maxY - barHeight - visibleFrame.height * Self.topInsetFraction,
+                width: frame.width,
+                height: barHeight
+            )
+            setFrame(barFrame, display: false)
+        }
+        applyShape(radius: Self.panelCornerRadius)
+        // Activate the app so keystrokes reach the search field.
+        NSApp.activate(ignoringOtherApps: true)
+        makeKeyAndOrderFront(nil)
     }
 }

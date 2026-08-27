@@ -813,11 +813,20 @@ final class WordService {
     /// 表格数据行的单元格列表；跳过表头与分隔行。
     /// 首列=单词（可能带 [[链接]]），末列=日期。
     static func tableRows(in content: String) -> [[String]] {
-        content.split(separator: "\n").compactMap { line -> [String]? in
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
+        // 旧格式的 [[w|alias]] 别名里是裸竖线、单元格里的 \| 是转义竖线，
+        // 直接按 | 切分会列序错位。先折叠别名、再把转义竖线换成占位符。
+        let aliasRegex = try? NSRegularExpression(pattern: #"\[\[([^\]|]+)\|([^\]]+)\]\]"#)
+        let sentinel = "\u{F8FF}"
+        return content.split(separator: "\n").compactMap { line -> [String]? in
+            var trimmed = line.trimmingCharacters(in: .whitespaces)
             guard trimmed.hasPrefix("|") else { return nil }
+            if let aliasRegex {
+                let range = NSRange(trimmed.startIndex..., in: trimmed)
+                trimmed = aliasRegex.stringByReplacingMatches(in: trimmed, range: range, withTemplate: "[[$1]]")
+            }
+            trimmed = trimmed.replacingOccurrences(of: "\\|", with: sentinel)
             var cells = trimmed.split(separator: "|", omittingEmptySubsequences: false)
-                .map { $0.trimmingCharacters(in: .whitespaces) }
+                .map { $0.trimmingCharacters(in: .whitespaces).replacingOccurrences(of: sentinel, with: "\\|") }
             if cells.first?.isEmpty == true { cells.removeFirst() }
             if cells.last?.isEmpty == true { cells.removeLast() }
             guard cells.count >= 7, cells[0] != "单词", !cells[0].contains("--") else { return nil }
@@ -847,6 +856,42 @@ final class WordService {
         first = first.replacingOccurrences(of: "]]", with: "")
         if let pipe = first.firstIndex(of: "|") { first = String(first[..<pipe]) }
         return first.trimmingCharacters(in: .whitespaces)
+    }
+
+    // MARK: 陪伴类数据源（今日一词 / 热力图）
+
+    struct VocabItem: Equatable {
+        var word: String
+        var meaning: String
+    }
+
+    /// 词表全部条目（单词 + 释义）
+    static func allEntries(in content: String) -> [VocabItem] {
+        tableRows(in: content).compactMap { cells in
+            let word = displayWord(cells[0])
+            guard !word.isEmpty, cells.count >= 4 else { return nil }
+            return VocabItem(word: word, meaning: cells[3])
+        }
+    }
+
+    /// 今日一词：按「自纪元起的天数」确定性轮换，同一天内稳定不变。
+    static func wordOfTheDay(in content: String, on date: Date = Date()) -> VocabItem? {
+        let entries = allEntries(in: content)
+        guard !entries.isEmpty else { return nil }
+        let calendar = Calendar.current
+        let days = calendar.dateComponents([.day],
+                                           from: calendar.startOfDay(for: Date(timeIntervalSince1970: 0)),
+                                           to: calendar.startOfDay(for: date)).day ?? 0
+        return entries[abs(days) % entries.count]
+    }
+
+    /// 日期 → 当日保存数（热力图数据源）
+    static func dateCounts(in content: String) -> [String: Int] {
+        var counts: [String: Int] = [:]
+        for cells in tableRows(in: content) where cells.count >= 7 {
+            counts[cells[6], default: 0] += 1
+        }
+        return counts
     }
 
     /// 该词已存在行的原保存日期（重逢提示用）。

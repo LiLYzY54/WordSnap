@@ -1,5 +1,6 @@
 import AppKit
 import ServiceManagement
+import SwiftUI
 
 /// Menu bar item: the app's permanent "face" — summon the panel,
 /// toggle launch-at-login, quit.
@@ -9,6 +10,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
 
     var onTogglePanel: (() -> Void)?
     var onOpenSettings: (() -> Void)?
+    var onLookupWord: ((String) -> Void)?
 
     init(onTogglePanel: @escaping () -> Void) {
         self.onTogglePanel = onTogglePanel
@@ -27,9 +29,34 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         statusItem.menu = menu
     }
 
-    // Rebuilt every time the menu opens so the login-item checkmark is current.
+    // Rebuilt every time the menu opens so login-item checkmark / 今日一词
+    // / heatmap are current.
     private func rebuildMenu() {
         let menu = NSMenu()
+
+        if let content = try? String(contentsOfFile: WordService.obsidianFile, encoding: .utf8) {
+            // 今日一词：点击直接呼出面板查它
+            if let daily = WordService.wordOfTheDay(in: content) {
+                let dailyItem = NSMenuItem(
+                    title: "📖 今日一词：\(daily.word) — \(daily.meaning)",
+                    action: #selector(lookupTodayWord),
+                    keyEquivalent: ""
+                )
+                dailyItem.target = self
+                dailyItem.representedObject = daily.word
+                menu.addItem(dailyItem)
+                menu.addItem(.separator())
+            }
+
+            // 近 16 周热力图
+            let heatmapItem = NSMenuItem()
+            let hosting = NSHostingView(
+                rootView: HeatmapView(counts: WordService.dateCounts(in: content)))
+            hosting.frame = NSRect(x: 0, y: 0, width: 220, height: 110)
+            heatmapItem.view = hosting
+            menu.addItem(heatmapItem)
+            menu.addItem(.separator())
+        }
 
         let summon = NSMenuItem(
             title: "呼出查词面板",
@@ -85,6 +112,12 @@ final class StatusBarController: NSObject, NSMenuDelegate {
 
     @objc private func openSettings() {
         onOpenSettings?()
+    }
+
+    @objc private func lookupTodayWord(_ sender: NSMenuItem) {
+        if let word = sender.representedObject as? String {
+            onLookupWord?(word)
+        }
     }
 
     @objc private func toggleLoginItem() {

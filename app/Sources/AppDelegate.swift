@@ -35,6 +35,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         statusBar.onOpenSettings = { [weak self] in
             self?.settingsWindow.show()
         }
+        statusBar.onLookupWord = { [weak self] word in
+            self?.floatingWindow.summonAndLookup(word)
+        }
         settingsWindow = SettingsWindowController { [weak self] config in
             self?.hotkeyManager.reregister(config: config) { [weak self] in
                 DispatchQueue.main.async {
