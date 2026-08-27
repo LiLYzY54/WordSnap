@@ -25,9 +25,67 @@ enum LookupError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .network: return "网络不稳定，请检查代理或稍后重试"
+        case .network: return "网络连接失败，请检查网络后重试"
         case .badResponse: return "词典接口返回异常"
         case .notFound: return "未找到该单词"
+        }
+    }
+}
+
+// MARK: - Chunked 传输解码（纯逻辑，无 IO，单测覆盖）
+
+/// RFC 7230 §4.1 增量解码器。把每次收到的新数据 feed 进来，
+/// 凑满终止块（0-chunk）并消费完 trailer 段后，一次性返回完整正文。
+/// trailer 段被完整吃掉是 keep-alive 复用正确性的前提——否则残留
+/// 字节会错位到下一个响应的头部。
+struct ChunkDecoder {
+
+    enum Outcome {
+        case needMore
+        case completed(Data)
+        case invalid
+    }
+
+    private var payload = Data()
+    private var buffer = Data()
+    /// 0-chunk 之后进入 trailer 阶段：逐行丢弃直到空行结束
+    private var readingTrailers = false
+
+    mutating func feed(_ data: Data) -> Outcome {
+        buffer.append(data)
+        while true {
+            guard let lineEnd = buffer.range(of: Data("\r\n".utf8)) else {
+                return .needMore
+            }
+            if readingTrailers {
+                let isEmptyLine = lineEnd.lowerBound == buffer.startIndex
+                buffer.removeSubrange(buffer.startIndex..<lineEnd.upperBound)
+                if isEmptyLine { return .completed(payload) }
+                continue
+            }
+
+            let sizeLineData = buffer.subdata(in: buffer.startIndex..<lineEnd.lowerBound)
+            let sizeLine = String(data: sizeLineData, encoding: .utf8) ?? ""
+            // 大小行允许 chunk 扩展："5;name=value" → 5
+            let hexText = sizeLine.split(separator: ";").first.map(String.init)?
+                .trimmingCharacters(in: .whitespaces) ?? ""
+            guard let size = Int(hexText, radix: 16), size >= 0 else {
+                return .invalid
+            }
+
+            if size == 0 {
+                buffer.removeSubrange(buffer.startIndex..<lineEnd.upperBound)
+                readingTrailers = true
+                continue
+            }
+
+            let chunkStart = lineEnd.upperBound
+            let required = size + 2 // 正文 + 结尾 CRLF
+            if buffer.endIndex - chunkStart < required {
+                return .needMore
+            }
+            payload.append(contentsOf: buffer[chunkStart..<(chunkStart + size)])
+            buffer.removeSubrange(buffer.startIndex..<(chunkStart + required))
         }
     }
 }
@@ -257,7 +315,23 @@ final class WordService {
             }
         }
 
+        /// Body 分帧决策依据 RFC 7230：chunked 存在时优先于 Content-Length。
+        private enum BodyFraming {
+            case length(Int)
+            case chunked
+            /// connection: close 且无分帧头 → 读到连接关闭为止
+            case untilClose
+            /// keep-alive 但没有分帧头（非标准响应）：沿用旧实现的宽容做法，
+            /// 头包里已到达的字节即视为正文，避免在复用连接上读到 4s 超时。
+            case unframedKeepAlive
+        }
+
+        private static let headerSeparator = Data("\r\n\r\n".utf8)
+        private static let maxBodyBytes = 4 * 1024 * 1024
+
         /// Send one HTTP/1.1 request and read the framed response body.
+        /// 非 2xx 状态码直接拒绝（badResponse 会驱动上层走代理兜底），
+        /// 而不是像旧实现那样把 403 的 HTML 页当成 JSON 去 decode。
         private func sendAndRead(_ conn: NWConnection, request: String) async throws -> Data {
             try await withCheckedThrowingContinuation { continuation in
                 var done = false
@@ -269,100 +343,135 @@ final class WordService {
                 let deadline = DispatchWorkItem { resume(.failure(URLError(.timedOut))) }
                 DispatchQueue.global().asyncAfter(deadline: .now() + 4, execute: deadline)
 
-                conn.send(content: request.data(using: .utf8), completion: .contentProcessed { error in
-                    if let error {
-                        deadline.cancel()
-                        resume(.failure(error))
-                    } else {
-                        readHeaders(buffer: Data())
+                func succeed(_ data: Data) {
+                    deadline.cancel()
+                    resume(.success(data))
+                }
+                func fail(_ error: Error) {
+                    deadline.cancel()
+                    resume(.failure(error))
+                }
+
+                var buffer = Data()
+                var framing: BodyFraming?
+                var chunker = ChunkDecoder()
+
+                /// true 表示该结果已终结本次读取
+                func settle(_ outcome: ChunkDecoder.Outcome) -> Bool {
+                    switch outcome {
+                    case .completed(let payload):
+                        succeed(payload)
+                        return true
+                    case .invalid:
+                        fail(LookupError.badResponse)
+                        return true
+                    case .needMore:
+                        return false
                     }
-                })
+                }
 
-                func readHeaders(buffer: Data) {
+                func pump() {
                     conn.receive(minimumIncompleteLength: 1, maximumLength: 64 * 1024) { data, _, complete, error in
-                        if let error {
-                            deadline.cancel()
-                            resume(.failure(error))
-                            return
-                        }
-                        var buf = buffer
-                        if let data { buf.append(data) }
-                        guard let text = String(data: buf, encoding: .utf8),
-                              let headerEnd = text.range(of: "\r\n\r\n") else {
-                            if complete || buf.count > 128 * 1024 {
-                                deadline.cancel()
-                                resume(.failure(LookupError.badResponse))
-                            } else {
-                                readHeaders(buffer: buf)
-                            }
-                            return
-                        }
-                        let header = String(text[..<headerEnd.lowerBound])
-                        var body = Data(text[headerEnd.upperBound...].utf8)
-                        let contentLength = Self.contentLength(in: header)
-                        if let contentLength, contentLength > 0 {
-                            readBody(body: body, remaining: contentLength - body.count)
-                        } else if header.lowercased().contains("connection: close") {
-                            readToEOF(body: body)
-                        } else {
-                            deadline.cancel()
-                            resume(.success(body))
-                        }
+                        if let error { fail(error); return }
+                        if let data { buffer.append(data) }
 
-                        func readBody(body: Data, remaining: Int) {
-                            guard remaining > 0 else {
-                                deadline.cancel()
-                                resume(.success(body))
+                        if framing == nil {
+                            guard let separator = buffer.range(of: Self.headerSeparator) else {
+                                if complete || buffer.count > 256 * 1024 {
+                                    fail(LookupError.badResponse)
+                                } else {
+                                    pump()
+                                }
                                 return
                             }
-                            conn.receive(minimumIncompleteLength: min(remaining, 64 * 1024), maximumLength: 64 * 1024) { data, _, complete, error in
-                                if let error {
-                                    deadline.cancel()
-                                    resume(.failure(error))
-                                    return
-                                }
-                                var newBody = body
-                                let received = data?.count ?? 0
-                                if let data { newBody.append(data) }
-                                if complete && received < remaining {
-                                    deadline.cancel()
-                                    resume(.failure(LookupError.badResponse))
-                                } else {
-                                    readBody(body: newBody, remaining: remaining - received)
-                                }
+                            guard let headerText = String(
+                                    data: buffer.subdata(in: buffer.startIndex..<separator.lowerBound),
+                                    encoding: .utf8
+                                ),
+                                let status = Self.statusCode(in: headerText),
+                                (200..<300).contains(status) else {
+                                fail(LookupError.badResponse)
+                                return
+                            }
+                            framing = Self.framing(in: headerText)
+                            // 头部之后余下的字节就是正文开头（可能同包到达）
+                            let body = buffer.subdata(in: separator.upperBound..<buffer.endIndex)
+                            buffer.removeAll(keepingCapacity: true)
+
+                            switch framing! {
+                            case .unframedKeepAlive:
+                                succeed(body)
+                                return
+                            case .chunked:
+                                if settle(chunker.feed(body)) { return }
+                                pump()
+                                return
+                            case .length, .untilClose:
+                                buffer = body
                             }
                         }
 
-                        func readToEOF(body: Data) {
-                            conn.receive(minimumIncompleteLength: 1, maximumLength: 64 * 1024) { data, _, complete, error in
-                                if let error {
-                                    deadline.cancel()
-                                    resume(.failure(error))
-                                    return
-                                }
-                                var newBody = body
-                                if let data { newBody.append(data) }
-                                if complete {
-                                    deadline.cancel()
-                                    resume(.success(newBody))
-                                } else {
-                                    readToEOF(body: newBody)
-                                }
+                        switch framing! {
+                        case .unframedKeepAlive:
+                            pump() // 不可达，防御性兜底
+                        case .length(let total):
+                            if buffer.count >= total {
+                                succeed(Data(buffer.prefix(total)))
+                            } else if complete && buffer.count < total {
+                                fail(LookupError.badResponse)
+                            } else if buffer.count > Self.maxBodyBytes {
+                                fail(LookupError.badResponse)
+                            } else {
+                                pump()
+                            }
+                        case .chunked:
+                            if settle(chunker.feed(data ?? Data())) { return }
+                            pump()
+                        case .untilClose:
+                            if complete {
+                                succeed(buffer)
+                            } else if buffer.count > Self.maxBodyBytes {
+                                fail(LookupError.badResponse)
+                            } else {
+                                pump()
                             }
                         }
                     }
                 }
+
+                conn.send(content: request.data(using: .utf8), completion: .contentProcessed { error in
+                    if let error {
+                        fail(error)
+                    } else {
+                        pump()
+                    }
+                })
             }
         }
 
-        private static func contentLength(in header: String) -> Int? {
+        /// "HTTP/1.1 200 OK" → 200
+        static func statusCode(in header: String) -> Int? {
+            let statusLine = header.split(separator: "\r\n", maxSplits: 1, omittingEmptySubsequences: false).first ?? ""
+            let fields = statusLine.split(separator: " ").map(String.init)
+            guard fields.count >= 2, fields[0].hasPrefix("HTTP/") else { return nil }
+            return Int(fields[1].trimmingCharacters(in: .whitespaces))
+        }
+
+        private static func framing(in header: String) -> BodyFraming {
+            var isChunked = false
+            var contentLength: Int?
             for line in header.split(separator: "\r\n") {
                 let parts = line.split(separator: ":", maxSplits: 1).map { $0.trimmingCharacters(in: .whitespaces) }
-                if parts.count == 2, parts[0].lowercased() == "content-length" {
-                    return Int(parts[1])
-                }
+                guard parts.count == 2 else { continue }
+                let name = parts[0].lowercased()
+                let value = parts[1].lowercased()
+                if name == "transfer-encoding", value.contains("chunked") { isChunked = true }
+                if name == "content-length" { contentLength = Int(value) }
             }
-            return nil
+            if isChunked { return .chunked }
+            if let contentLength, contentLength >= 0 { return .length(contentLength) }
+            let closes = header.lowercased().contains("connection: close")
+            return closes ? .untilClose : .unframedKeepAlive
         }
 
         /// Move the last successful IP to the front so next lookup hits it first.
