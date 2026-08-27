@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 // MARK: - Phase
@@ -17,6 +18,29 @@ final class SearchModel: ObservableObject {
 
     @Published var searchText = ""
     @Published var phase: LookupPhase = .idle
+    /// 全选信号：token 自增触发一次输入框全选（配合剪贴板预填）
+    @Published var selectAllToken = 0
+    private var lastPrefilledWord: String?
+
+    /// ⌘L 呼出时若剪贴板正好是单个英文词，直接预填（回车即查）。
+    /// 记忆上次预填词避免同一词反复出现；不清空剪贴板——那是有破坏性的。
+    func prefillFromClipboard() {
+        guard searchText.isEmpty,
+              let raw = NSPasteboard.general.string(forType: .string)?
+                  .trimmingCharacters(in: .whitespacesAndNewlines),
+              let word = Self.clipboardWord(raw),
+              word != lastPrefilledWord else { return }
+        lastPrefilledWord = word
+        searchText = word
+        selectAllToken += 1
+    }
+
+    private static func clipboardWord(_ s: String) -> String? {
+        guard s.count <= 40,
+              let regex = try? NSRegularExpression(pattern: #"^[A-Za-z][A-Za-z\-']*$"#),
+              regex.firstMatch(in: s, range: NSRange(s.startIndex..., in: s)) != nil else { return nil }
+        return s
+    }
 
     func lookup() async {
         let word = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -85,6 +109,12 @@ struct RootSearchView: View {
             }
         )
         .onPreferenceChange(ContentHeightKey.self) { onHeightChange($0) }
+        .onChange(of: model.selectAllToken) { _ in
+            // 等字段编辑器（NSText）就位后全选：预填后直接输入即替换
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
+                (NSApp.keyWindow?.firstResponder as? NSText)?.selectAll(nil)
+            }
+        }
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { notification in
             // Refocus the search field every time the panel is summoned.
             if (notification.object as? NSWindow)?.isKind(of: NSPanel.self) == true {

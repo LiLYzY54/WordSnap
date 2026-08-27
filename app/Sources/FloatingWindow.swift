@@ -180,6 +180,7 @@ final class FloatingWindow: NSPanel {
             Task { WordService.YoudaoDirectClient.shared.warmUp() }
             // Every summon starts from a fresh capsule — no leftover results.
             model.reset()
+            model.prefillFromClipboard()
             let barHeight = Self.barOnlyHeight
             if let screen = NSScreen.main {
                 let visibleFrame = screen.visibleFrame
