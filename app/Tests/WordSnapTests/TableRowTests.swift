@@ -62,9 +62,10 @@ final class TableRowTests: XCTestCase {
     private func makeEntry(word: String = "fat",
                            phonetic: String = "fæt",
                            meaning: String = "胖",
-                           example: String = "") -> WordEntry {
+                           example: String = "",
+                           star: String? = nil) -> WordEntry {
         WordEntry(word: word, phonetic: phonetic, partOfSpeech: "adj.",
                   meaning: meaning, englishDef: "", example: example,
-                  source: "Youdao", date: "2026-08-27")
+                  source: "Youdao", date: "2026-08-27", star: star)
     }
 }

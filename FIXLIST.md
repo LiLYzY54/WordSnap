@@ -21,7 +21,7 @@
 
 ## T 模板 · 词笔记（Obsidian 管理端）
 
-- [ ] **T-1 NoteWriter**：保存/重逢时在表格同目录 `Vocabulary/` 下维护词笔记：
+- [x] **T-1 NoteWriter**：保存/重逢时在表格同目录 `Vocabulary/` 下维护词笔记：
   - 模板：frontmatter（word / phonetic / pos / added / source / star /
     status / tags）+ 正文（释义 / 英文释义 / 例句 / 我的痕迹）+
     末尾 `word::释义` 单行卡（兼容 obsidian-spaced-repetition）；

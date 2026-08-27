@@ -62,9 +62,11 @@ final class SearchModel: ObservableObject {
         do {
             let outcome = try WordService.shared.save(entry)
             if outcome.saved {
+                NoteWriter.writeIfMissing(entry)
                 phase = .saved(total: outcome.totalCount, streak: outcome.streakDays)
                 scheduleAutoHide()
             } else {
+                NoteWriter.appendEncounter(entry)
                 phase = .reunion(entry: entry,
                                  previousDate: outcome.existingDate ?? "")
                 scheduleAutoHide()

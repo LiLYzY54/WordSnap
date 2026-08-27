@@ -14,6 +14,8 @@ struct WordEntry: Codable, Equatable {
     var source: String
     /// yyyy-MM-dd
     var date: String
+    /// 柯林斯星级（"1"..."5"），无则 nil
+    var star: String?
 }
 
 // MARK: - Errors
@@ -597,6 +599,8 @@ final class WordService {
                         var pos_entry: PosEntry?
                     }
                     var tran_entry: [TranEntry]?
+                    /// 柯林斯核心词星级，"1"..."5"
+                    var star: String?
                 }
                 var entry: [Inner]?
             }
@@ -638,13 +642,16 @@ final class WordService {
         var partOfSpeech = ""
         var meaning = ""
         var englishDef = ""
-        if let tran = decoded.collins?.collins_entries?.first?.entries?.entry?.first?.tran_entry?.first {
-            partOfSpeech = cleanHTML(tran.pos_entry?.pos_tips ?? "")
+        var star: String?
+        if let inner = decoded.collins?.collins_entries?.first?.entries?.entry?.first {
+            star = inner.star
+            let tran = inner.tran_entry?.first
+            partOfSpeech = cleanHTML(tran?.pos_entry?.pos_tips ?? "")
             if partOfSpeech.isEmpty {
-                partOfSpeech = cleanHTML(tran.pos_entry?.pos ?? "")
+                partOfSpeech = cleanHTML(tran?.pos_entry?.pos ?? "")
             }
             // 柯林斯格式为「英文解释 + 中文翻译」，拆开分别入表
-            (englishDef, meaning) = splitEnglishChinese(cleanHTML(tran.tran ?? ""))
+            (englishDef, meaning) = splitEnglishChinese(cleanHTML(tran?.tran ?? ""))
         } else {
             let translations = (decoded.ec?.word?.first?.trs ?? [])
                 .compactMap { $0.tr?.first?.l?.i }
@@ -671,7 +678,8 @@ final class WordService {
             englishDef: englishDef,
             example: example,
             source: "Youdao",
-            date: Self.dateFormatter.string(from: Date())
+            date: Self.dateFormatter.string(from: Date()),
+            star: star
         )
     }
 

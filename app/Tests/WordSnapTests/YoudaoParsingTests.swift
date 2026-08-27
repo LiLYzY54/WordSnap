@@ -9,7 +9,8 @@ final class YoudaoParsingTests: XCTestCase {
     {
       "simple": {"word": [{"usphone": "ɪˈfemərəl"}]},
       "collins": {"collins_entries": [{"entries": {"entry": [
-        {"tran_entry": [
+        {"star": "4",
+         "tran_entry": [
           {"tran": "Something that is ephemeral lasts for only a very short time. 短暂的；朝生暮死的",
            "pos_entry": {"pos_tips": "ADJ"}}
         ]}
@@ -42,6 +43,7 @@ final class YoudaoParsingTests: XCTestCase {
                        "Something that is ephemeral lasts for only a very short time.")
         XCTAssertEqual(entry.meaning, "短暂的；朝生暮死的")
         XCTAssertEqual(entry.phonetic, "ɪˈfemərəl")
+        XCTAssertEqual(entry.star, "4", "柯林斯星级应被解码")
         XCTAssertFalse(entry.example.contains("<b>"), "HTML 标签应被清理")
         XCTAssertTrue(entry.example.contains("ephemeral"))
         XCTAssertEqual(entry.source, "Youdao")
