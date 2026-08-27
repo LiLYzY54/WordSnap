@@ -90,6 +90,20 @@ struct ChunkDecoder {
     }
 }
 
+// MARK: - Save outcome
+
+/// 保存结果：横幅文案所需的一切。
+struct SaveOutcome {
+    /// false = 词已存在（重逢，未写入新行）
+    let saved: Bool
+    /// 词表当前总词数
+    let totalCount: Int
+    /// 连续保存天数（含今天）
+    let streakDays: Int
+    /// 重逢时：该词原保存日期 yyyy-MM-dd
+    let existingDate: String?
+}
+
 // MARK: - Service
 
 /// Looks up words via the Youdao Dictionary JSON API and persists entries
@@ -702,7 +716,7 @@ final class WordService {
     /// Append the entry as a Markdown table row. Read–modify–write atomically,
     /// creating the file (with header) when missing and never leaving stray
     /// blank lines. Skips words that are already in the table (dedupe).
-    func save(_ entry: WordEntry) throws -> Bool {
+    func save(_ entry: WordEntry) throws -> SaveOutcome {
         let path = Self.obsidianFile
         let directory = NSString(string: path).deletingLastPathComponent
         try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
@@ -716,7 +730,10 @@ final class WordService {
 
             // Dedupe: check the 单词 column (first cell) of existing rows only.
             if Self.containsWord(entry.word, in: content) {
-                return false
+                let stats = Self.stats(in: content)
+                return SaveOutcome(saved: false, totalCount: stats.total,
+                                   streakDays: stats.streakDays,
+                                   existingDate: Self.existingRowDate(entry.word, in: content))
             }
         } else {
             content = Self.tableHeader + "\n"
@@ -724,7 +741,61 @@ final class WordService {
         content += Self.markdownRow(for: entry)
 
         try content.write(toFile: path, atomically: true, encoding: .utf8)
-        return true
+        let stats = Self.stats(in: content)
+        return SaveOutcome(saved: true, totalCount: stats.total,
+                           streakDays: stats.streakDays, existingDate: nil)
+    }
+
+    // MARK: Table parsing (供统计/重逢/陪伴类功能共用的行解析)
+
+    /// 表格数据行的单元格列表；跳过表头与分隔行。
+    /// 首列=单词（可能带 [[链接]]），末列=日期。
+    static func tableRows(in content: String) -> [[String]] {
+        content.split(separator: "\n").compactMap { line -> [String]? in
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            guard trimmed.hasPrefix("|") else { return nil }
+            var cells = trimmed.split(separator: "|", omittingEmptySubsequences: false)
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+            if cells.first?.isEmpty == true { cells.removeFirst() }
+            if cells.last?.isEmpty == true { cells.removeLast() }
+            guard cells.count >= 7, cells[0] != "单词", !cells[0].contains("--") else { return nil }
+            return cells
+        }
+    }
+
+    /// 统计：总词数 + 连续保存天数（从 on 当天往前数，断档即停）。
+    static func stats(in content: String, on date: Date = Date()) -> (total: Int, streakDays: Int) {
+        let rows = tableRows(in: content)
+        let dates = Set(rows.compactMap { $0.count >= 7 ? $0[6] : nil })
+        let calendar = Calendar.current
+        var day = date
+        var streak = 0
+        while dates.contains(dateFormatter.string(from: day)) {
+            streak += 1
+            guard let previous = calendar.date(byAdding: .day, value: -1, to: day) else { break }
+            day = previous
+        }
+        return (rows.count, streak)
+    }
+
+    /// [[word|alias]] → word（不改变大小写）
+    static func displayWord(_ raw: String) -> String {
+        var first = raw
+        if let inner = first.range(of: "[[") { first = String(first[inner.upperBound...]) }
+        first = first.replacingOccurrences(of: "]]", with: "")
+        if let pipe = first.firstIndex(of: "|") { first = String(first[..<pipe]) }
+        return first.trimmingCharacters(in: .whitespaces)
+    }
+
+    /// 该词已存在行的原保存日期（重逢提示用）。
+    static func existingRowDate(_ word: String, in content: String) -> String? {
+        let target = word.lowercased()
+        for cells in tableRows(in: content) {
+            if displayWord(cells[0]).lowercased() == target, cells.count >= 7 {
+                return cells[6]
+            }
+        }
+        return nil
     }
 
     /// True if any markdown table row in `content` has `word` as its first cell

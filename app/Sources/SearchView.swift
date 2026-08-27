@@ -8,7 +8,8 @@ enum LookupPhase: Equatable {
     case loading
     case loaded(WordEntry)
     case failed(String)
-    case saved
+    /// 保存成功：total = 词表总数，streak = 连续天数
+    case saved(total: Int, streak: Int)
 }
 
 // MARK: - Model
@@ -57,8 +58,9 @@ final class SearchModel: ObservableObject {
     func save() {
         guard case .loaded(let entry) = phase else { return }
         do {
-            if try WordService.shared.save(entry) {
-                phase = .saved
+            let outcome = try WordService.shared.save(entry)
+            if outcome.saved {
+                phase = .saved(total: outcome.totalCount, streak: outcome.streakDays)
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) { [weak self] in
                     self?.reset()
                     NotificationCenter.default.post(name: .wordSnapHidePanel, object: nil)
@@ -187,11 +189,12 @@ struct RootSearchView: View {
                     .font(.system(size: 12))
                     .foregroundStyle(.tertiary)
             }
-        case .saved:
+        case .saved(let total, let streak):
             HStack(spacing: 8) {
                 Image(systemName: "checkmark.circle.fill")
                     .foregroundStyle(.green)
-                Text("已保存到 Obsidian")
+                Text(streak > 1 ? "已保存 · 第 \(total) 个词 · 连续第 \(streak) 天"
+                                : "已保存 · 第 \(total) 个词")
                     .font(.system(size: 16, weight: .medium))
             }
             .frame(maxWidth: .infinity, alignment: .center)
