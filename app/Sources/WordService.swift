@@ -40,7 +40,7 @@ enum LookupError: LocalizedError {
 /// 字节会错位到下一个响应的头部。
 struct ChunkDecoder {
 
-    enum Outcome {
+    enum Outcome: Equatable {
         case needMore
         case completed(Data)
         case invalid
@@ -607,7 +607,9 @@ final class WordService {
         var blng_sents_part: Blng?
     }
 
-    private static func parse(_ data: Data, word: String) throws -> WordEntry {
+    /// 有道响应 → 词表条目。格式变化时抛 badResponse；
+    /// 响应有效但查无释义时抛 notFound。
+    static func parse(_ data: Data, word: String) throws -> WordEntry {
         let decoded: YoudaoResponse
         do {
             decoded = try JSONDecoder().decode(YoudaoResponse.self, from: data)
@@ -662,7 +664,7 @@ final class WordService {
     /// Split a Collins definition like
     /// "If you describe something as ephemeral, ... 短暂的; 瞬间的"
     /// into (englishDef, chineseMeaning).
-    private static func splitEnglishChinese(_ text: String) -> (english: String, chinese: String) {
+    static func splitEnglishChinese(_ text: String) -> (english: String, chinese: String) {
         guard let firstCJK = text.firstIndex(where: { isCJK($0) }) else {
             return ("", text)
         }
@@ -751,7 +753,7 @@ final class WordService {
     |------|------|------|------|------|------|------|
     """
 
-    private static func markdownRow(for entry: WordEntry) -> String {
+    static func markdownRow(for entry: WordEntry) -> String {
         func escape(_ value: String) -> String {
             value.replacingOccurrences(of: "|", with: "\\|")
                 .replacingOccurrences(of: "\n", with: " ")
@@ -761,8 +763,11 @@ final class WordService {
         if !phonetic.isEmpty && !phonetic.hasPrefix("/") {
             phonetic = "/\(phonetic)/"
         }
-        // 单词列用 Obsidian 双链，自动关联/创建词条笔记
-        let linked = "[[\(entry.word)|\(entry.word)]]"
+        // 单词列用 Obsidian 双链自动关联/创建词条笔记。
+        // 不写 [[word|alias]] 别名形式——别名分隔符是未转义的裸竖线，
+        // 在严格 GFM 解析器里会把表格行拦腰截断；显示文本与链接目标
+        // 本就相同，别名毫无信息量。
+        let linked = "[[\(entry.word)]]"
         return "| \(linked) | \(escape(phonetic)) | \(escape(entry.partOfSpeech)) | "
              + "\(escape(entry.meaning)) | \(escape(entry.example)) | \(escape(entry.source)) | \(escape(entry.date)) |\n"
     }
