@@ -77,23 +77,38 @@ final class WordService {
 
         let start = Date()
 
-        // 快路径：绕过代理的持久直连（IP 记忆 + 连接复用）
+        // 快路径：绕过代理的持久直连（IP 记忆 + 连接复用）。
+        // 拿到完整响应后如果查无此词，直接上抛 notFound——拼错的词不是
+        // 网络问题，不能再触发代理兜底，否则会被误报成「网络不稳定」。
+        var directData: Data?
         do {
-            let data = try await YoudaoDirectClient.shared.lookup(word)
+            directData = try await YoudaoDirectClient.shared.lookup(word)
+        } catch {
+            NSLog("WordSnap [direct] failed for %@: %@", word, String(describing: error))
+        }
+
+        if let data = directData {
+            do {
+                let entry = try Self.parse(data, word: word)
+                Self.logTiming(word: word, ms: Date().timeIntervalSince(start) * 1000, via: "direct")
+                return entry
+            } catch LookupError.notFound {
+                Self.logTiming(word: word, ms: Date().timeIntervalSince(start) * 1000, via: "direct:not-found")
+                throw LookupError.notFound
+            } catch {
+                // 响应解析失败（接口格式变化等）：降级走代理再试一次
+            }
+        }
+
+        // 慢路径兑底：走系统代理的 URLSession（限时）
+        do {
+            let data = try await proxyFetch(word)
             let entry = try Self.parse(data, word: word)
-            Self.logTiming(word: word, ms: Date().timeIntervalSince(start) * 1000, via: "direct")
+            Self.logTiming(word: word, ms: Date().timeIntervalSince(start) * 1000, via: "proxy")
             return entry
         } catch {
-            // 慢路径兑底：走系统代理的 URLSession（限时）
-            do {
-                let data = try await proxyFetch(word)
-                let entry = try Self.parse(data, word: word)
-                Self.logTiming(word: word, ms: Date().timeIntervalSince(start) * 1000, via: "proxy")
-                return entry
-            } catch {
-                Self.logTiming(word: word, ms: Date().timeIntervalSince(start) * 1000, via: "failed")
-                throw LookupError.network("网络不稳定，请检查代理或稍后重试")
-            }
+            Self.logTiming(word: word, ms: Date().timeIntervalSince(start) * 1000, via: "failed")
+            throw LookupError.network("网络连接失败，请检查网络后重试")
         }
     }
 
