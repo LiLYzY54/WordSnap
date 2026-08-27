@@ -6,13 +6,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var hotkeyManager: HotkeyManager!
     private var floatingWindow: FloatingWindow!
     private var statusBar: StatusBarController!
+    private var settingsWindow: SettingsWindowController!
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         hotkeyManager = HotkeyManager()
         floatingWindow = FloatingWindow()
 
-        // Register global hotkey: ⌘L
-        hotkeyManager.register(key: .l, modifiers: [.command]) { [weak self] in
+        // 全局热键：默认 ⌘L，可在设置窗口改（持久化 UserDefaults）
+        hotkeyManager.register(config: HotkeyManager.stored) { [weak self] in
             DispatchQueue.main.async {
                 self?.floatingWindow.toggle()
             }
@@ -30,6 +31,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Menu bar item: the app's permanent home.
         statusBar = StatusBarController { [weak self] in
             self?.floatingWindow.toggle()
+        }
+        statusBar.onOpenSettings = { [weak self] in
+            self?.settingsWindow.show()
+        }
+        settingsWindow = SettingsWindowController { [weak self] config in
+            self?.hotkeyManager.reregister(config: config) { [weak self] in
+                DispatchQueue.main.async {
+                    self?.floatingWindow.toggle()
+                }
+            }
         }
 
         // 启动即预热直连：首次呼出查词就已接近即时

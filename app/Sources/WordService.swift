@@ -119,7 +119,14 @@ final class WordService {
     /// 1. WORDSNAP_OBSIDIAN_PATH env var
     /// 2. ~/.wordsnap.json { "obsidianPath": "..." }
     /// 3. generic default
-    static let obsidianFile: String = {
+    /// （var + refresh：设置窗口改路径后即时生效，无需重启）
+    static private(set) var obsidianFile: String = resolveObsidianPath()
+
+    static func refreshObsidianPath() {
+        obsidianFile = resolveObsidianPath()
+    }
+
+    private static func resolveObsidianPath() -> String {
         if let override = ProcessInfo.processInfo.environment["WORDSNAP_OBSIDIAN_PATH"],
            !override.isEmpty {
             return NSString(string: override).expandingTildeInPath
@@ -134,7 +141,7 @@ final class WordService {
         return NSString(
             string: "~/Documents/Obsidian/English Vocabulary Learning.md"
         ).expandingTildeInPath
-    }()
+    }
 
     private let session: URLSession
 

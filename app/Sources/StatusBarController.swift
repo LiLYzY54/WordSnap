@@ -8,6 +8,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     private let statusItem: NSStatusItem
 
     var onTogglePanel: (() -> Void)?
+    var onOpenSettings: (() -> Void)?
 
     init(onTogglePanel: @escaping () -> Void) {
         self.onTogglePanel = onTogglePanel
@@ -52,6 +53,16 @@ final class StatusBarController: NSObject, NSMenuDelegate {
 
         menu.addItem(.separator())
 
+        let settings = NSMenuItem(
+            title: "设置…",
+            action: #selector(openSettings),
+            keyEquivalent: ""
+        )
+        settings.target = self
+        menu.addItem(settings)
+
+        menu.addItem(.separator())
+
         let quit = NSMenuItem(title: "退出 WordSnap", action: #selector(quit), keyEquivalent: "q")
         quit.keyEquivalentModifierMask = [.command]
         quit.target = self
@@ -70,6 +81,10 @@ final class StatusBarController: NSObject, NSMenuDelegate {
 
     @objc private func summonPanel() {
         onTogglePanel?()
+    }
+
+    @objc private func openSettings() {
+        onOpenSettings?()
     }
 
     @objc private func toggleLoginItem() {
