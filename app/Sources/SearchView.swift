@@ -211,6 +211,15 @@ struct RootSearchView: View {
                         .font(.system(size: 15))
                         .foregroundStyle(.secondary)
                 }
+                Button {
+                    Pronouncer.shared.play(entry.word)
+                } label: {
+                    Image(systemName: "speaker.wave.2.fill")
+                        .font(.system(size: 14))
+                        .foregroundStyle(.tertiary)
+                }
+                .buttonStyle(.plain)
+                .help("朗读")
                 Spacer()
                 saveButton
             }
