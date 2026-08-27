@@ -726,8 +726,10 @@ final class WordService {
     }
 
     /// True if any markdown table row in `content` has `word` as its first cell
-    /// (matching both plain and [[link]] forms).
-    private static func containsWord(_ word: String, in content: String) -> Bool {
+    /// (matching both plain and [[link]] forms). Case-insensitive——与迁移脚本
+    /// 的去重口径一致，「Word」和「word」不能在表里存两份。
+    static func containsWord(_ word: String, in content: String) -> Bool {
+        let target = word.lowercased()
         for line in content.split(separator: "\n") {
             let trimmed = line.trimmingCharacters(in: .whitespaces)
             guard trimmed.hasPrefix("|") else { continue }
@@ -739,7 +741,7 @@ final class WordService {
             first = first.replacingOccurrences(of: "]]", with: "")
             if let pipe = first.firstIndex(of: "|") { first = String(first[..<pipe]) }
             first = first.trimmingCharacters(in: .whitespaces)
-            if first == word { return true }
+            if first.lowercased() == target { return true }
         }
         return false
     }
