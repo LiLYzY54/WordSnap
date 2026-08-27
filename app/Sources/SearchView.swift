@@ -25,8 +25,6 @@ final class SearchModel: ObservableObject {
     @Published var selectAllToken = 0
     /// notFound 时的纠错候选（suggest 接口）
     @Published var suggestions: [String] = []
-    /// 今日一词（呼出面板时刷新；空态幽灵提示）
-    @Published var todayHint: WordService.VocabItem?
     private var lastPrefilledWord: String?
 
     // 撤销窗口状态
@@ -61,7 +59,9 @@ final class SearchModel: ObservableObject {
         suggestions = []
 
         do {
-            phase = .loaded(try await WordService.shared.lookup(word))
+            let entry = try await WordService.shared.lookup(word)
+            Pronouncer.shared.prefetch(entry.word)
+            phase = .loaded(entry)
         } catch let error as LookupError {
             if case .notFound(let candidates) = error { suggestions = candidates }
             phase = .failed(error.localizedDescription)
@@ -190,56 +190,34 @@ struct RootSearchView: View {
     // MARK: Search bar
 
     private var searchBar: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 10) {
-                Image(systemName: "magnifyingglass")
-                    .font(.system(size: 18, weight: .medium))
-                    .foregroundStyle(.secondary)
+        HStack(spacing: 10) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 18, weight: .medium))
+                .foregroundStyle(.secondary)
 
-                TextField("Type a word, leave a trace…", text: $model.searchText)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 22, weight: .medium))
-                    .focused($focused)
-                    .onSubmit { Task { await model.lookup() } }
-                    .onExitCommand { NotificationCenter.default.post(name: .wordSnapHidePanel, object: nil) }
+            TextField("Type a word, leave a trace…", text: $model.searchText)
+                .textFieldStyle(.plain)
+                .font(.system(size: 22, weight: .medium))
+                .focused($focused)
+                .onSubmit { Task { await model.lookup() } }
+                .onExitCommand { NotificationCenter.default.post(name: .wordSnapHidePanel, object: nil) }
 
-                if model.phase == .loading {
-                    ProgressView()
-                        .controlSize(.small)
-                } else if !model.searchText.isEmpty {
-                    Button {
-                        model.reset()
-                        focused = true
-                    } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .foregroundStyle(.tertiary)
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-            .padding(.horizontal, 24)
-            .padding(.vertical, 16)
-
-            if model.phase == .idle, let hint = model.todayHint {
+            if model.phase == .loading {
+                ProgressView()
+                    .controlSize(.small)
+            } else if !model.searchText.isEmpty {
                 Button {
-                    model.lookupReplacement(hint.word)
+                    model.reset()
+                    focused = true
                 } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "sparkles")
-                            .font(.system(size: 10))
-                        Text("今日一词 · \(hint.word)")
-                            .font(.system(size: 12, weight: .medium))
-                        Text(hint.meaning)
-                            .font(.system(size: 11))
-                            .lineLimit(1)
-                    }
-                    .foregroundStyle(.tertiary)
-                    .padding(.horizontal, 24)
-                    .padding(.bottom, 10)
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(.tertiary)
                 }
                 .buttonStyle(.plain)
             }
         }
+        .padding(.horizontal, 24)
+        .padding(.vertical, 16)
     }
 
     // MARK: Result states

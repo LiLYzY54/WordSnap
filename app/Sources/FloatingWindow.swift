@@ -193,8 +193,6 @@ final class FloatingWindow: NSPanel {
         // Every summon starts from a fresh capsule — no leftover results.
         model.reset()
         model.prefillFromClipboard()
-        model.todayHint = WordService.wordOfTheDay(
-            in: (try? String(contentsOfFile: WordService.obsidianFile, encoding: .utf8)) ?? "")
         let barHeight = Self.barOnlyHeight
         if let screen = NSScreen.main {
             let visibleFrame = screen.visibleFrame

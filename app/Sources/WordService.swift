@@ -144,8 +144,26 @@ final class WordService {
     }
 
     private let session: URLSession
+    /// 重查缓存：同一词 10 分钟内 0ms 返回（网络差时体验差异巨大）
+    private let resultCache = NSCache<NSString, CacheItem>()
+
+    private final class CacheItem {
+        let entry: WordEntry
+        let at: Date
+        init(entry: WordEntry, at: Date) {
+            self.entry = entry
+            self.at = at
+        }
+    }
+
+    private static let cacheTTL: TimeInterval = 600
+
+    private func cacheResult(_ word: String, entry: WordEntry) {
+        resultCache.setObject(CacheItem(entry: entry, at: Date()), forKey: word as NSString)
+    }
 
     private init() {
+        resultCache.countLimit = 100
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = 10
         session = URLSession(configuration: config)
@@ -156,6 +174,12 @@ final class WordService {
     func lookup(_ rawWord: String) async throws -> WordEntry {
         let word = rawWord.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !word.isEmpty else { throw LookupError.notFound([]) }
+
+        if let hit = resultCache.object(forKey: word as NSString),
+           Date().timeIntervalSince(hit.at) < Self.cacheTTL {
+            Self.logTiming(word: word, ms: 0, via: "cache")
+            return hit.entry
+        }
 
         let start = Date()
 
@@ -173,6 +197,7 @@ final class WordService {
             do {
                 let entry = try Self.parse(data, word: word)
                 Self.logTiming(word: word, ms: Date().timeIntervalSince(start) * 1000, via: "direct")
+                cacheResult(word, entry: entry)
                 return entry
             } catch LookupError.notFound {
                 Self.logTiming(word: word, ms: Date().timeIntervalSince(start) * 1000, via: "direct:not-found")
@@ -187,6 +212,7 @@ final class WordService {
             let data = try await proxyFetch(word)
             let entry = try Self.parse(data, word: word)
             Self.logTiming(word: word, ms: Date().timeIntervalSince(start) * 1000, via: "proxy")
+            cacheResult(word, entry: entry)
             return entry
         } catch LookupError.notFound {
             Self.logTiming(word: word, ms: Date().timeIntervalSince(start) * 1000, via: "proxy:not-found")
@@ -288,14 +314,19 @@ final class WordService {
 
         private static let seedIPs = ["220.197.31.37", "123.58.167.197", "220.197.27.26"]
         private static let maxIPs = 8
+        /// 单次查询最多试这么多 IP：池子最坏 8 个时若全试，8×1.5s 超时才轮到
+        /// 代理，用户感知就是「查词巨慢」。3 个失败立刻快失败落代理。
+        private static let maxAttemptsPerLookup = 3
         private static let ipListKey = "youdaoDirectIPs"
         private static let refreshedAtKey = "youdaoDirectIPsRefreshedAt"
         private static let refreshInterval: TimeInterval = 24 * 60 * 60
 
         private static var ipList: [String] {
             get {
-                let saved = UserDefaults.standard.stringArray(forKey: ipListKey)
-                return (saved?.isEmpty == false) ? saved! : seedIPs
+                // 读取即过滤：早期版本可能已把 fake-IP 写进 UserDefaults，自愈
+                let saved = (UserDefaults.standard.stringArray(forKey: ipListKey) ?? [])
+                    .filter(isPlausiblePublicIPv4)
+                return saved.isEmpty ? seedIPs : saved
             }
             set { UserDefaults.standard.set(newValue, forKey: ipListKey) }
         }
@@ -303,7 +334,7 @@ final class WordService {
         /// Try IPs in order (best remembered first); reuse the live connection.
         func lookup(_ word: String) async throws -> Data {
             scheduleRefreshIfStale()
-            let ips = Self.ipList
+            let ips = Self.ipList.prefix(Self.maxAttemptsPerLookup)
             var lastError: Error = LookupError.network("直连失败")
             for ip in ips {
                 do {
@@ -312,9 +343,19 @@ final class WordService {
                     return data
                 } catch {
                     lastError = error
+                    Self.demote(ip)
                 }
             }
             throw lastError
+        }
+
+        /// 失败 IP 挪到池尾：坏地址不在下次查询时又排最前吃满超时。
+        private static func demote(_ ip: String) {
+            var list = ipList
+            guard let index = list.firstIndex(of: ip) else { return }
+            list.remove(at: index)
+            list.append(ip)
+            ipList = list
         }
 
         /// Open the persistent connection ahead of time so the first real
@@ -349,7 +390,8 @@ final class WordService {
         }
 
         private func merge(resolved fresh: [String]) {
-            guard !fresh.isEmpty else { return }
+            let plausible = fresh.filter(Self.isPlausiblePublicIPv4)
+            guard !plausible.isEmpty else { return }
             var seen = Set<String>()
             var merged: [String] = []
             func push(_ ip: String) {
@@ -359,9 +401,29 @@ final class WordService {
                 }
             }
             Self.ipList.filter { !Self.seedIPs.contains($0) }.forEach(push)
-            fresh.forEach(push)
+            plausible.forEach(push)
             Self.seedIPs.forEach(push)
             Self.ipList = Array(merged.prefix(Self.maxIPs))
+        }
+
+        /// TUN 代理的 fake-IP（Clash 等默认 198.18.0.0/15）与内网/保留段
+        /// 根本无法直连公有网 CDN——这类地址混进池子等于每次查询白吃超时。
+        static func isPlausiblePublicIPv4(_ ip: String) -> Bool {
+            let parts = ip.split(separator: ".").compactMap { Int($0) }
+            guard parts.count == 4, parts.allSatisfy({ (0...255).contains($0) }) else { return false }
+            let (a, b) = (parts[0], parts[1])
+            switch (a, b) {
+            case (0, _), (10, _), (127, _), (169, 254):          // 环回/内网/链路本地
+                return false
+            case (172, 16...31), (192, 168):                     // 私有段
+                return false
+            case (100, 64...127):                                // CGNAT
+                return false
+            case (198, 18), (198, 19):                           // fake-IP 池
+                return false
+            default:
+                return true
+            }
         }
 
         /// 真实 DNS 解析（getaddrinfo），绕开 TUN fake-IP 拿到可达的服务器地址。
