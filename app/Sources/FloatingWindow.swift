@@ -16,6 +16,7 @@ final class FloatingWindow: NSPanel {
     private var appliedCornerRadius: CGFloat = -1
     private var pendingHeight: CGFloat?
     private var flushScheduled = false
+    private var hideObserver: NSObjectProtocol?
 
     let model = SearchModel()
 
@@ -59,6 +60,19 @@ final class FloatingWindow: NSPanel {
 
         applyShape(radius: Self.panelCornerRadius)
         positionLikeSpotlight()
+
+        // Esc（onExitCommand）和保存成功后的自动消失都走这条通知，在此统一收起面板。
+        hideObserver = NotificationCenter.default.addObserver(
+            forName: .wordSnapHidePanel, object: nil, queue: .main
+        ) { [weak self] _ in
+            self?.orderOut(nil)
+        }
+    }
+
+    deinit {
+        if let hideObserver {
+            NotificationCenter.default.removeObserver(hideObserver)
+        }
     }
 
     /// Debug helper for automated visual tests.
