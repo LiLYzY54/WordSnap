@@ -10,6 +10,8 @@ enum LookupPhase: Equatable {
     case failed(String)
     /// 保存成功：total = 词表总数，streak = 连续天数
     case saved(total: Int, streak: Int)
+    /// 重复保存：这个词之前已存过（重逢）
+    case reunion(entry: WordEntry, previousDate: String)
 }
 
 // MARK: - Model
@@ -61,17 +63,29 @@ final class SearchModel: ObservableObject {
             let outcome = try WordService.shared.save(entry)
             if outcome.saved {
                 phase = .saved(total: outcome.totalCount, streak: outcome.streakDays)
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) { [weak self] in
-                    self?.reset()
-                    NotificationCenter.default.post(name: .wordSnapHidePanel, object: nil)
-                }
+                scheduleAutoHide()
             } else {
-                phase = .failed("这个词已经在词汇表里了")
+                phase = .reunion(entry: entry,
+                                 previousDate: outcome.existingDate ?? "")
+                scheduleAutoHide()
             }
         } catch {
             phase = .failed("保存失败：\(error.localizedDescription)")
         }
     }
+
+    private func scheduleAutoHide(seconds: TimeInterval = 1.4) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { [weak self] in
+            self?.reset()
+            NotificationCenter.default.post(name: .wordSnapHidePanel, object: nil)
+        }
+    }
+
+    private static let shortDateFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd"
+        return f
+    }()
 
     func reset() {
         searchText = ""
@@ -167,6 +181,26 @@ struct RootSearchView: View {
 
     // MARK: Result states
 
+    private static let shortDateFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd"
+        return f
+    }()
+
+    /// "2026-08-03" → "8月3日"；解析失败原样返回
+    static func prettyDate(_ iso: String) -> String {
+        guard let date = shortDateFormatter.date(from: iso) else { return iso }
+        let f = DateFormatter()
+        f.dateFormat = "M月d日"
+        return f.string(from: date)
+    }
+
+    static func reunionMessage(entry: WordEntry, previousDate: String) -> String {
+        previousDate.isEmpty
+            ? "\(entry.word) 已在词汇表里，又遇到它了"
+            : "\(entry.word) · \(prettyDate(previousDate)) 存过，又遇到它了"
+    }
+
     @ViewBuilder
     private var resultSection: some View {
         switch model.phase {
@@ -196,6 +230,17 @@ struct RootSearchView: View {
                 Text(streak > 1 ? "已保存 · 第 \(total) 个词 · 连续第 \(streak) 天"
                                 : "已保存 · 第 \(total) 个词")
                     .font(.system(size: 16, weight: .medium))
+            }
+            .frame(maxWidth: .infinity, alignment: .center)
+            .padding(.vertical, 8)
+        case .reunion(let entry, let previousDate):
+            // 忘词恰恰是间隔重复的信号：把「报错」翻转成「重逢」
+            HStack(spacing: 8) {
+                Image(systemName: "clock.arrow.circlepath")
+                    .foregroundStyle(.orange)
+                Text(Self.reunionMessage(entry: entry, previousDate: previousDate))
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundStyle(.secondary)
             }
             .frame(maxWidth: .infinity, alignment: .center)
             .padding(.vertical, 8)
