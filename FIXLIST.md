@@ -51,6 +51,6 @@
 
 ## Q 收尾
 
-- [ ] **Q-1 全量验证**：`xcodebuild build + test` 全绿（新增 stats /
+- [x] **Q-1 全量验证**：`xcodebuild build + test` 全绿（新增 stats /
   suggest-parser / NoteWriter / wordOfTheDay / dateCounts 用例，原有用例
   同步适配）；README 与 SPEC 更新新能力；最终构建并重启应用。

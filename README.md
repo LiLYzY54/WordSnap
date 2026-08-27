@@ -1,32 +1,36 @@
 # WordSnap
 
-macOS 桌面应用：快捷键呼出 Liquid Glass 悬浮窗 → 查询单词 → 保存到 Obsidian 表格。
+macOS 桌面应用：快捷键呼出 Liquid Glass 悬浮窗 → 查询单词 → 保存到 Obsidian。
 
 纯 Swift 实现（SwiftUI + URLSession），无 Python、无外部依赖。
 
 ## 快捷键
 
-- `⌘L`: 呼出/隐藏悬浮窗口
+- `⌘L`: 呼出/隐藏悬浮窗（菜单栏「设置…」可换键并支持录制）
 - `Enter`: 在输入框时触发查询
 - `⌘Enter`: 预览结果时保存到 Obsidian
 - `Esc`: 隐藏窗口
 
 ## 使用流程
 
-1. 按 `⌘L` 呼出悬浮窗口
-2. 输入单词，回车查询
-3. 预览释义（单词 / 音标 / 词性 / 释义 / 例句）
-4. 按 `⌘Enter` 或点击「保存」写入 Obsidian 表格
-5. 显示「已保存 ✓」后自动消失
+1. 按 `⌘L` 呼出悬浮窗——剪贴板里若正好是单词会自动预填，回车即查
+2. 预览释义（单词 / 音标 / 🔊 发音 / 词性 / 中英释义 / 例句）
+3. 按 `⌘Enter` 保存；横幅显示「第 N 个词 · 连续第 M 天」，4 秒内可撤销
+4. 重复保存不会报错，而是显示「X月X日 存过，又遇到它了」（间隔重复信号）
+5. 查不到的词给出「你是不是想找」候选胶囊，一键重查
+6. Esc 隐藏窗口；保存后自动收起
 
-## Obsidian 目标文件
+## Obsidian 词汇库
 
-默认：`~/Documents/Obsidian/English Vocabulary Learning.md`（可配置，见下）
+- **表格（采集日志）**：默认 `~/Documents/Obsidian/English Vocabulary Learning.md`，
+  每次保存追加一行
+- **词笔记（词的家）**：保存在表格同目录 `Vocabulary/<word>.md`，含
+  frontmatter（词/音标/词性/星级/状态）与文末 `word::释义` 单行卡，
+  直接兼容 obsidian-spaced-repetition 插件在桌面/手机上背诵
+- **菜单栏**：📖 今日一词（点击即查）、近 16 周热力图、设置…
 
-自定义保存路径（优先级从高到低）：
-1. 环境变量 `WORDSNAP_OBSIDIAN_PATH`
-2. 配置文件 `~/.wordsnap.json`：`{ "obsidianPath": "~/你的路径/词汇表.md" }`
-3. 上述默认路径
+路径配置：菜单栏「设置…」图形化选择，或环境变量 `WORDSNAP_OBSIDIAN_PATH` /
+`~/.wordsnap.json`。
 
 表格列：`| 单词 | 音标 | 词性 | 释义 | 例句 | 来源 | 日期 |`
 文件不存在时自动创建（含表头），单词列带 Obsidian 双链。
@@ -36,7 +40,7 @@ macOS 桌面应用：快捷键呼出 Liquid Glass 悬浮窗 → 查询单词 →
 - Swift 5 + SwiftUI（macOS 26 Liquid Glass 质感）
 - 有道词典 JSON API（`dict.youdao.com/jsonapi`，免费无需 Key）
 - XcodeGen 构建工程
-- 全局快捷键：Carbon `RegisterEventHotKey`
+- 全局快捷键：Carbon `RegisterEventHotKey`（可配置、可持久化）
 
 ## 开发与构建
 
@@ -49,7 +53,7 @@ Xcode 工程不入库，由 [XcodeGen](https://github.com/yonaskolb/XcodeGen) �
 # 运行应用
 open build/DerivedData/Build/Products/Debug/WordSnap.app
 
-# 单元测试（解析 / 分帧解码 / 表格写入等纯逻辑）
+# 单元测试（解析 / 分帧解码 / 表格写入 / 词笔记 / 统计等纯逻辑）
 xcodebuild test -project app/WordSnap.xcodeproj -scheme WordSnap -destination 'platform=macOS'
 ```
 

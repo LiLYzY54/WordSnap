@@ -25,18 +25,22 @@
 ```
 app/Sources/
 ├── main.swift               # NSApplication 启动（accessory 常驻）
-├── AppDelegate.swift        # 装配：热键注册 / 登录项 CLI 参数 / 直连预热 / WORDSNAP_AUTOSHOW 调试口
-├── HotkeyManager.swift      # Carbon 全局热键封装
-├── StatusBarController.swift# 菜单栏图标：呼出面板 / 登录时启动 / 退出
-├── FloatingWindow.swift     # NSPanel + 玻璃容器；胶囊↔面板共弹簧形变；订阅隐藏通知
-├── SearchView.swift         # SwiftUI 界面 + SearchModel 状态机（idle/loading/loaded/failed/saved）
+├── AppDelegate.swift        # 装配：热键注册(可配置) / 登录项 CLI / 直连预热 / 设置窗口
+├── HotkeyManager.swift      # Carbon 全局热键：Config 持久化 + reregister 即时换键
+├── SettingsWindow.swift     # 设置窗口：快捷键录制 / Obsidian 路径选择
+├── StatusBarController.swift# 菜单栏：今日一词 / 热力图 / 呼出面板 / 设置 / 登录项 / 退出
+├── FloatingWindow.swift     # NSPanel + 玻璃容器；胶囊↔面板形变；Esc 拦截；剪贴板预填
+├── SearchView.swift         # SwiftUI 界面 + SearchModel 状态机（含 saved/reunion 与撤销）
+├── Pronouncer.swift         # 有道 dictvoice 美音（AVPlayer）
+├── HeatmapView.swift        # 近 16 周打卡格（菜单内嵌）
+├── NoteWriter.swift         # 词笔记：模板渲染 / 幂等创建 / 重逢追加 / 撤销删除
 └── WordService.swift        # 核心域逻辑：
-    ├── lookup()             #   直连快路径 → notFound 直接上抛；仅异常才降级系统代理慢路径
-    ├── YoudaoDirectClient   #   actor：IP 学习池(每日 getaddrinfo 刷新) + TLS SNI 固定 +
-    │                        #   keep-alive 复用；HTTP 解析支持 Content-Length/chunked/
-    │                        #   connection:close 三种分帧与非 2xx 拒绝
-    ├── parse()              #   柯林斯优先（英文释义/中文释义拆分）→ ec → simple.custom 兜底
-    └── save()               #   读-改-写原子落表：建表头 / 大小写不敏感去重 / 管道符转义
+    ├── lookup()             #   直连快路径 → notFound 附带 suggest 候选；异常降级代理
+    ├── YoudaoDirectClient   #   actor：IP 学习池(每日 DNS 刷新) + TLS SNI + keep-alive；
+    │                        #   Content-Length/chunked/close 三种分帧 + 非 2xx 拒绝
+    ├── parse()              #   柯林斯优先（中英拆分+星级）→ ec → custom 兜底
+    ├── save()/deleteRow()   #   原子落表 + 撤销；tableRows/stats 等可单测行解析
+    └── wordOfTheDay()/dateCounts() # 今日一词轮换 + 热力图统计
 ```
 
 ## 查词管线
@@ -55,7 +59,10 @@ Esc / 隐藏通知 → orderOut
 
 ## 数据格式
 
-词汇表 7 列固定，向旧文件兼容读取（`[[word|别名]]` 旧写法可被去重识别）：
+两段式：**表格是采集日志，词笔记是词的家。**
+
+- 表格 7 列固定（每次保存追加一行）；旧文件兼容读取（`[[word|别名]]`
+  旧写法可被去重/统计识别）：
 
 ```markdown
 | 单词 | 音标 | 词性 | 释义 | 例句 | 来源 | 日期 |
@@ -63,8 +70,30 @@ Esc / 隐藏通知 → orderOut
 | [[serendipity]] | /ˌser.ənˈdɪp.ə.ti/ | n. | 意外发现的乐趣 | It was pure serendipity… | Youdao | 2026-08-27 |
 ```
 
-目标路径解析优先级：环境变量 `WORDSNAP_OBSIDIAN_PATH` > `~/.wordsnap.json` 的
-`obsidianPath` > 默认 `~/Documents/Obsidian/English Vocabulary Learning.md`。
+- 词笔记 `Vocabulary/<word>.md`（NoteWriter 维护，已存在绝不覆盖；
+  重逢只在「我的痕迹」追加）。文末 `word::释义` 单行卡兼容
+  obsidian-spaced-repetition：
+
+```markdown
+---
+word: serendipity
+phonetic: /ˌser.ənˈdɪp.ə.ti/
+pos: n.
+added: 2026-08-27
+source: Youdao
+star: ★★★★☆
+status: new
+tags: [vocabulary, flashcards]
+---
+
+# serendipity
+## 释义 / ## 英文释义 / ## 例句 / ## 我的痕迹
+
+serendipity::意外发现的乐趣
+```
+
+路径解析优先级：设置窗口（写 `~/.wordsnap.json`）> 环境变量
+`WORDSNAP_OBSIDIAN_PATH` > 默认 `~/Documents/Obsidian/English Vocabulary Learning.md`。
 
 ## 错误处理
 
@@ -77,8 +106,10 @@ Esc / 隐藏通知 → orderOut
 
 ## 测试
 
-纯逻辑全部可单测（`app/Tests/WordSnapTests/`，19 例）：chunked 分帧解码、
-状态行解析、有道 JSON 解析三路兜底、中英拆分、表格行转义/去重。
+纯逻辑全部可单测（`app/Tests/WordSnapTests/`，33 例）：chunked 分帧解码、
+状态行解析、有道 JSON 解析三路兜底、中英拆分、表格行转义/去重、
+保存统计（总词数/连续天数）、suggest 候选解析、词笔记模板（幂等/追加/
+文件名净化）、今日一词轮换、热力图计数。
 
 ```bash
 xcodebuild test -project app/WordSnap.xcodeproj -scheme WordSnap -destination 'platform=macOS'
