@@ -8,7 +8,6 @@ final class HotkeyManager {
     private var handlerInstalled = false
 
     enum KeyCode: UInt32 {
-        case w = 13
         case l = 37
     }
 
