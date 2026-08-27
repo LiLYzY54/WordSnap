@@ -217,17 +217,22 @@ final class WordService {
         private var connectionIP: String?
 
         private static let seedIPs = ["220.197.31.37", "123.58.167.197", "220.197.27.26"]
+        private static let maxIPs = 8
+        private static let ipListKey = "youdaoDirectIPs"
+        private static let refreshedAtKey = "youdaoDirectIPsRefreshedAt"
+        private static let refreshInterval: TimeInterval = 24 * 60 * 60
 
         private static var ipList: [String] {
             get {
-                let saved = UserDefaults.standard.stringArray(forKey: "youdaoDirectIPs")
+                let saved = UserDefaults.standard.stringArray(forKey: ipListKey)
                 return (saved?.isEmpty == false) ? saved! : seedIPs
             }
-            set { UserDefaults.standard.set(newValue, forKey: "youdaoDirectIPs") }
+            set { UserDefaults.standard.set(newValue, forKey: ipListKey) }
         }
 
         /// Try IPs in order (best remembered first); reuse the live connection.
         func lookup(_ word: String) async throws -> Data {
+            scheduleRefreshIfStale()
             let ips = Self.ipList
             var lastError: Error = LookupError.network("直连失败")
             for ip in ips {
@@ -247,12 +252,73 @@ final class WordService {
         /// （shared 是进程级单例，闭包强持有无害；勿加捕获列表——
         ///   Swift 5 检查级别下显式捕获会让 Task 失去 actor 隔离推断。）
         func warmUp() {
+            scheduleRefreshIfStale()
             guard connection == nil else { return }
             let ip = Self.ipList.first ?? Self.seedIPs[0]
             Task {
                 self.connection = try? await self.openConnection(ip: ip)
                 if self.connection != nil { self.connectionIP = ip }
             }
+        }
+
+        // MARK: IP 池学习
+
+        /// 种子 IP 是写死的：CDN 一换地址，所有用户的每次查询都要先串行
+        /// 吃满整个过期列表的连接超时。这里隔天用真实 DNS 解析刷新一次池子，
+        /// 顺序为「学习到的成功 IP → 新解析结果 → 种子垫底」，且只在超过
+        /// 刷新间隔时触发一次后台任务，不阻塞当前查询。
+        private func scheduleRefreshIfStale() {
+            let now = Date().timeIntervalSince1970
+            guard now - UserDefaults.standard.double(forKey: Self.refreshedAtKey)
+                    > Self.refreshInterval else { return }
+            UserDefaults.standard.set(now, forKey: Self.refreshedAtKey)
+            Task.detached(priority: .utility) { [weak self] in
+                let resolved = Self.resolveIPv4(host: "dict.youdao.com")
+                await self?.merge(resolved: resolved)
+            }
+        }
+
+        private func merge(resolved fresh: [String]) {
+            guard !fresh.isEmpty else { return }
+            var seen = Set<String>()
+            var merged: [String] = []
+            func push(_ ip: String) {
+                if !ip.isEmpty && !seen.contains(ip) {
+                    seen.insert(ip)
+                    merged.append(ip)
+                }
+            }
+            Self.ipList.filter { !Self.seedIPs.contains($0) }.forEach(push)
+            fresh.forEach(push)
+            Self.seedIPs.forEach(push)
+            Self.ipList = Array(merged.prefix(Self.maxIPs))
+        }
+
+        /// 真实 DNS 解析（getaddrinfo），绕开 TUN fake-IP 拿到可达的服务器地址。
+        /// 阻塞式调用，只应在 utility 队列执行。
+        private nonisolated static func resolveIPv4(host name: String) -> [String] {
+            var hints = addrinfo()
+            hints.ai_family = AF_INET
+            hints.ai_socktype = SOCK_STREAM
+            var info: UnsafeMutablePointer<addrinfo>?
+            guard getaddrinfo(name, nil, &hints, &info) == 0, info != nil else { return [] }
+            defer { freeaddrinfo(info) }
+
+            var out: [String] = []
+            var node: UnsafeMutablePointer<addrinfo>? = info
+            while let current = node {
+                if current.pointee.ai_family == AF_INET,
+                   let sockaddrPtr = current.pointee.ai_addr {
+                    let sin = sockaddrPtr.withMemoryRebound(to: sockaddr_in.self, capacity: 1) { $0.pointee }
+                    var buf = [CChar](repeating: 0, count: Int(INET_ADDRSTRLEN))
+                    var addr = sin.sin_addr
+                    if inet_ntop(AF_INET, &addr, &buf, socklen_t(INET_ADDRSTRLEN)) != nil {
+                        out.append(String(cString: buf))
+                    }
+                }
+                node = current.pointee.ai_next
+            }
+            return out
         }
 
         private func request(word: String, ip: String) async throws -> Data {
