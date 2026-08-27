@@ -40,13 +40,21 @@ macOS 桌面应用：快捷键呼出 Liquid Glass 悬浮窗 → 查询单词 →
 
 ## 开发与构建
 
+Xcode 工程不入库，由 [XcodeGen](https://github.com/yonaskolb/XcodeGen) 从 `app/project.yml` 生成。
+
 ```bash
-# 一键构建（需要 Xcode 26+ 和 xcodegen）
+# 一键构建（需要 Xcode 26+ 和 xcodegen；首次克隆直接跑即可）
 ./scripts/setup.sh
 
 # 运行应用
 open build/DerivedData/Build/Products/Debug/WordSnap.app
+
+# 单元测试（解析 / 分帧解码 / 表格写入等纯逻辑）
+xcodebuild test -project app/WordSnap.xcodeproj -scheme WordSnap -destination 'platform=macOS'
 ```
+
+改构建配置请编辑 `app/project.yml` 后在 `app/` 下执行 `xcodegen generate`，
+不要手工编辑工程文件。架构细节见 `SPEC.md`。
 
 ## 注意
 
