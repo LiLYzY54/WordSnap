@@ -806,6 +806,24 @@ final class WordService {
         return nil
     }
 
+    /// 撤销最近一次保存：移除该词最后一行（去重保证唯一）。文件不存在则忽略。
+    @discardableResult
+    func deleteRow(word: String) -> Bool {
+        let path = Self.obsidianFile
+        guard let content = try? String(contentsOfFile: path, encoding: .utf8) else { return false }
+        var lines = content.components(separatedBy: "\n")
+        guard let index = lines.lastIndex(where: {
+            let trimmed = $0.trimmingCharacters(in: .whitespaces)
+            guard trimmed.hasPrefix("|") else { return false }
+            let first = trimmed.split(separator: "|", omittingEmptySubsequences: false)
+                .dropFirst().first.map(String.init) ?? ""
+            return Self.displayWord(first).lowercased() == word.lowercased()
+        }) else { return false }
+        lines.remove(at: index)
+        let out = lines.joined(separator: "\n")
+        return (try? out.write(toFile: path, atomically: true, encoding: .utf8)) != nil
+    }
+
     /// True if any markdown table row in `content` has `word` as its first cell
     /// (matching both plain and [[link]] forms). Case-insensitive——与迁移脚本
     /// 的去重口径一致，「Word」和「word」不能在表里存两份。

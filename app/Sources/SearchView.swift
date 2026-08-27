@@ -25,6 +25,11 @@ final class SearchModel: ObservableObject {
     @Published var selectAllToken = 0
     private var lastPrefilledWord: String?
 
+    // 撤销窗口状态
+    private var lastSavedEntry: WordEntry?
+    private var lastNoteCreated = false
+    private var hideWorkItem: DispatchWorkItem?
+
     /// ⌘L 呼出时若剪贴板正好是单个英文词，直接预填（回车即查）。
     /// 记忆上次预填词避免同一词反复出现；不清空剪贴板——那是有破坏性的。
     func prefillFromClipboard() {
@@ -61,26 +66,45 @@ final class SearchModel: ObservableObject {
         guard case .loaded(let entry) = phase else { return }
         do {
             let outcome = try WordService.shared.save(entry)
+            lastSavedEntry = entry
             if outcome.saved {
-                NoteWriter.writeIfMissing(entry)
+                lastNoteCreated = NoteWriter.writeIfMissing(entry)
                 phase = .saved(total: outcome.totalCount, streak: outcome.streakDays)
-                scheduleAutoHide()
             } else {
                 NoteWriter.appendEncounter(entry)
+                lastNoteCreated = false // 笔记非本次新建，撤销不动它
                 phase = .reunion(entry: entry,
                                  previousDate: outcome.existingDate ?? "")
-                scheduleAutoHide()
             }
+            // 4s 撤销窗口：给误按 ⌘Enter 留后悔药
+            scheduleAutoHide(seconds: 4)
         } catch {
             phase = .failed("保存失败：\(error.localizedDescription)")
         }
     }
 
-    private func scheduleAutoHide(seconds: TimeInterval = 1.4) {
-        DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { [weak self] in
-            self?.reset()
+    /// 撤销刚完成的保存：删表行；若词笔记是本次新建的也一并删除。
+    func undoSave() {
+        guard let entry = lastSavedEntry else { return }
+        hideWorkItem?.cancel()
+        if WordService.shared.deleteRow(word: entry.word), lastNoteCreated {
+            NoteWriter.deleteNote(for: entry.word)
+        }
+        lastSavedEntry = nil
+        searchText = ""
+        phase = .idle
+        scheduleAutoHide(seconds: 0.8, hideOnly: true)
+    }
+
+    private func scheduleAutoHide(seconds: TimeInterval, hideOnly: Bool = false) {
+        hideWorkItem?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            if !hideOnly { self.reset() }
             NotificationCenter.default.post(name: .wordSnapHidePanel, object: nil)
         }
+        hideWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + seconds, execute: work)
     }
 
     private static let shortDateFormatter: DateFormatter = {
@@ -226,12 +250,19 @@ struct RootSearchView: View {
                     .foregroundStyle(.tertiary)
             }
         case .saved(let total, let streak):
-            HStack(spacing: 8) {
-                Image(systemName: "checkmark.circle.fill")
-                    .foregroundStyle(.green)
-                Text(streak > 1 ? "已保存 · 第 \(total) 个词 · 连续第 \(streak) 天"
-                                : "已保存 · 第 \(total) 个词")
-                    .font(.system(size: 16, weight: .medium))
+            VStack(spacing: 6) {
+                HStack(spacing: 8) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundStyle(.green)
+                    Text(streak > 1 ? "已保存 · 第 \(total) 个词 · 连续第 \(streak) 天"
+                                    : "已保存 · 第 \(total) 个词")
+                        .font(.system(size: 16, weight: .medium))
+                }
+                Button("撤销") { model.undoSave() }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 12))
+                    .foregroundStyle(.tertiary)
+                    .help("移除刚写入的记录")
             }
             .frame(maxWidth: .infinity, alignment: .center)
             .padding(.vertical, 8)
