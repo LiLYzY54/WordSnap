@@ -101,8 +101,6 @@ struct SaveOutcome {
     let saved: Bool
     /// 词表当前总词数
     let totalCount: Int
-    /// 连续保存天数（含今天）
-    let streakDays: Int
     /// 重逢时：该词原保存日期 yyyy-MM-dd
     let existingDate: String?
 }
@@ -856,7 +854,6 @@ final class WordService {
             if Self.containsWord(entry.word, in: content) {
                 let stats = Self.stats(in: content)
                 return SaveOutcome(saved: false, totalCount: stats.total,
-                                   streakDays: stats.streakDays,
                                    existingDate: Self.existingRowDate(entry.word, in: content))
             }
         } else {
@@ -866,8 +863,7 @@ final class WordService {
 
         try content.write(toFile: path, atomically: true, encoding: .utf8)
         let stats = Self.stats(in: content)
-        return SaveOutcome(saved: true, totalCount: stats.total,
-                           streakDays: stats.streakDays, existingDate: nil)
+        return SaveOutcome(saved: true, totalCount: stats.total, existingDate: nil)
     }
 
     // MARK: Table parsing (供统计/重逢/陪伴类功能共用的行解析)

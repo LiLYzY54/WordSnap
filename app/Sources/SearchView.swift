@@ -8,8 +8,8 @@ enum LookupPhase: Equatable {
     case loading
     case loaded(WordEntry)
     case failed(String)
-    /// 保存成功：total = 词表总数，streak = 连续天数
-    case saved(total: Int, streak: Int)
+    /// 保存成功：total = 词表总数
+    case saved(total: Int)
     /// 重复保存：这个词之前已存过（重逢）
     case reunion(entry: WordEntry, previousDate: String)
 }
@@ -84,7 +84,7 @@ final class SearchModel: ObservableObject {
             lastSavedEntry = entry
             if outcome.saved {
                 lastNoteCreated = NoteWriter.writeIfMissing(entry)
-                phase = .saved(total: outcome.totalCount, streak: outcome.streakDays)
+                phase = .saved(total: outcome.totalCount)
             } else {
                 NoteWriter.appendEncounter(entry)
                 lastNoteCreated = false // 笔记非本次新建，撤销不动它
@@ -280,13 +280,12 @@ struct RootSearchView: View {
                     }
                 }
             }
-        case .saved(let total, let streak):
+        case .saved(let total):
             VStack(spacing: 6) {
                 HStack(spacing: 8) {
                     Image(systemName: "checkmark.circle.fill")
                         .foregroundStyle(.green)
-                    Text(streak > 1 ? "已保存 · 第 \(total) 个词 · 连续第 \(streak) 天"
-                                    : "已保存 · 第 \(total) 个词")
+                    Text("已保存 · 第 \(total) 个词")
                         .font(.system(size: 16, weight: .medium))
                 }
                 Button("撤销") { model.undoSave() }
