@@ -1,0 +1,9 @@
+{
+  "id": "wordsnap-vocab",
+  "name": "WordSnap 词库",
+  "version": "1.0.0",
+  "minAppVersion": "1.0.0",
+  "description": "WordSnap 词汇表管理：仪表盘、检索、翻卡复习。读取 WordSnap 保存的表格与词笔记。",
+  "author": "WordSnap",
+  "isDesktopOnly": false
+}

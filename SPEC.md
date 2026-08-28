@@ -95,6 +95,15 @@ serendipity::意外发现的乐趣
 路径解析优先级：设置窗口（写 `~/.wordsnap.json`）> 环境变量
 `WORDSNAP_OBSIDIAN_PATH` > 默认 `~/Documents/Obsidian/English Vocabulary Learning.md`。
 
+## Obsidian 管理端（obsidian-plugin/）
+
+零依赖纯 JS 插件（`wordsnap-vocab`），与 App 共享同一份表格+词笔记数据：
+- 词库页（搜索/筛选/卡片/发音/状态轮换）、复习页（翻卡四档评分回写
+  frontmatter status）、统计页（总量/月度柱状/16 周热力图）
+- 数据读取用与 App 端 `tableRows` 相同的解析口径（别名折叠/转义竖线），
+  词笔记元数据走 Obsidian metadataCache（零文件 IO）
+- vault: Daily_Thoughts；表格路径与笔记目录均可在插件设置中调整
+
 ## 错误处理
 
 | 场景 | 行为 |

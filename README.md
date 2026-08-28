@@ -29,6 +29,19 @@ macOS 桌面应用：快捷键呼出 Liquid Glass 悬浮窗 → 查询单词 →
   直接兼容 obsidian-spaced-repetition 插件在桌面/手机上背诵
 - **菜单栏**：📖 今日一词（点击即查）、近 16 周热力图、设置…
 
+### Obsidian 词库管理界面（自带插件）
+
+仓库 `obsidian-plugin/` 目录是一个零依赖的 Obsidian 插件，装进 vault
+（拷贝到 `.obsidian/plugins/wordsnap-vocab/` 并在社区插件里启用）后，
+打开 Obsidian 即得词汇管理面板：
+
+- **词库页**：搜索、状态筛选、卡片网格、🔊 发音、点词开笔记、
+  点状态徽章轮换（新词→学习中→熟悉→已掌握）
+- **复习页**：翻卡 + 四档评分，评分回写词笔记的 frontmatter `status`
+- **统计页**：总词数 / 本月新增 / 已掌握 / 月度柱状 / 16 周热力图
+
+启动 Obsidian 自动展示（可在设置里改表格与笔记路径）。
+
 路径配置：菜单栏「设置…」图形化选择，或环境变量 `WORDSNAP_OBSIDIAN_PATH` /
 `~/.wordsnap.json`。
 

@@ -63,20 +63,20 @@
 
 ## R2 二次反馈
 
-- [ ] **R-6 去掉连续天数文案**：保存横幅不再显示「连续第 M 天」——
+- [x] **R-6 去掉连续天数文案**：保存横幅不再显示「连续第 M 天」——
   计数对用户是压力不是快乐（用户原话）。保留总词数。
 
 ## O Obsidian 界面轮 · 自建词库管理界面
 
-- [ ] **O-1 自研 Obsidian 插件「WordSnap 词库」**：三页视图——
+- [x] **O-1 自研 Obsidian 插件「WordSnap 词库」**：三页视图——
   词库（搜索/状态筛选/卡片网格/发音/点词开笔记/点状态徽章轮换）、
   复习（翻卡 + 不认识/模糊/认识/已掌握 四档评分，回写词笔记
   frontmatter status）、统计（总量/月度柱状/16 周热力图；无连续
   天数施压文案）。纯 JS 无构建步骤，读 WordSnap 表格+词笔记。
-- [ ] **O-2 安装启用**：装入 Daily_Thoughts vault 的
+- [x] **O-2 安装启用**：装入 Daily_Thoughts vault 的
   .obsidian/plugins/wordsnap-vocab/ 并加入 community-plugins.json
   （先备份原配置）。
-- [ ] **O-3 加载验证**：重启 Obsidian 确认插件加载、图标可见。
+- [x] **O-3 加载验证**：重启 Obsidian 确认插件加载、图标可见。
 
 ## Q 收尾
 
