@@ -3,6 +3,71 @@ import SwiftUI
 
 final class FloatingWindow: NSPanel {
 
+    /// 系统原生玻璃窗口边缘自带的光学描边：内侧一圈镜面高光（上亮下淡，
+    /// 中段最暗），最外圈一道极淡的深色发丝线。手动合成 NSGlassEffectView
+    /// 时系统不送这层，得自己补——否则面板在浅色壁纸上边缘发虚、没有
+    /// 「金属收口」的质感。
+    private final class EdgeStrokeView: NSView {
+
+        var cornerRadius: CGFloat = 30 { didSet { needsLayout = true } }
+
+        private let gradient = CAGradientLayer()
+        private let ringMask = CAShapeLayer()
+        private let outerLine = CAShapeLayer()
+
+        override init(frame frameRect: NSRect) {
+            super.init(frame: frameRect)
+            wantsLayer = true
+
+            gradient.colors = [
+                NSColor(white: 1, alpha: 0.65).cgColor,
+                NSColor(white: 1, alpha: 0.10).cgColor,
+                NSColor(white: 1, alpha: 0.32).cgColor,
+            ]
+            gradient.locations = [0, 0.45, 1]
+            gradient.startPoint = CGPoint(x: 0.5, y: 0)
+            gradient.endPoint = CGPoint(x: 0.5, y: 1)
+            gradient.mask = ringMask
+            layer?.addSublayer(gradient)
+
+            outerLine.strokeColor = NSColor(white: 0, alpha: 0.10).cgColor
+            outerLine.fillColor = nil
+            outerLine.lineWidth = 1
+            layer?.addSublayer(outerLine)
+        }
+
+        required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+        override func layout() {
+            super.layout()
+            // 窗口高度动画期间 AppKit 会持续回调 layout，环随帧更新
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            gradient.frame = bounds
+            outerLine.frame = bounds
+
+            let outer = ringPath(inset: 0.5)
+            let path = CGMutablePath()
+            path.addPath(outer)
+            path.addPath(ringPath(inset: 1.5))
+            ringMask.path = path
+            ringMask.fillRule = .evenOdd
+            outerLine.path = outer
+            CATransaction.commit()
+        }
+
+        private func ringPath(inset: CGFloat) -> CGPath {
+            let r = max(0, cornerRadius - inset)
+            return NSBezierPath(
+                roundedRect: bounds.insetBy(dx: inset, dy: inset),
+                xRadius: r, yRadius: r
+            ).cgPath
+        }
+
+        /// 纯装饰层：绝不拦截玻璃内容层的鼠标事件
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+    }
+
     /// Top edge inset from the visible screen, Spotlight-style.
     private static let topInsetFraction: CGFloat = 0.18
     private static let barOnlyHeight: CGFloat = 68
@@ -10,6 +75,7 @@ final class FloatingWindow: NSPanel {
     private static let panelCornerRadius: CGFloat = 30
 
     private let glass = NSGlassEffectView()
+    private let edgeStrokes = EdgeStrokeView(frame: .zero)
     /// Clips every layer (including the glass) to the panel's rounded shape,
     /// so nothing can paint into the square window corners.
     private let clipContainer = NSView()
@@ -57,6 +123,14 @@ final class FloatingWindow: NSPanel {
             glass.trailingAnchor.constraint(equalTo: clipContainer.trailingAnchor),
             glass.topAnchor.constraint(equalTo: clipContainer.topAnchor),
             glass.bottomAnchor.constraint(equalTo: clipContainer.bottomAnchor),
+        ])
+        clipContainer.addSubview(edgeStrokes)
+        edgeStrokes.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            edgeStrokes.leadingAnchor.constraint(equalTo: clipContainer.leadingAnchor),
+            edgeStrokes.trailingAnchor.constraint(equalTo: clipContainer.trailingAnchor),
+            edgeStrokes.topAnchor.constraint(equalTo: clipContainer.topAnchor),
+            edgeStrokes.bottomAnchor.constraint(equalTo: clipContainer.bottomAnchor),
         ])
         contentView = clipContainer
 
@@ -165,6 +239,7 @@ final class FloatingWindow: NSPanel {
             clipContainer.layer?.cornerCurve = .continuous
             clipContainer.layer?.masksToBounds = true
             glass.cornerRadius = r
+            edgeStrokes.cornerRadius = r
             CATransaction.commit()
         }
     }
