@@ -195,12 +195,12 @@ struct RootSearchView: View {
                 .font(.system(size: 18, weight: .medium))
                 .foregroundStyle(.secondary)
 
-            TextField("Type a word, leave a trace…", text: $model.searchText)
-                .textFieldStyle(.plain)
-                .font(.system(size: 22, weight: .medium))
-                .focused($focused)
-                .onSubmit { Task { await model.lookup() } }
-                .onExitCommand { NotificationCenter.default.post(name: .wordSnapHidePanel, object: nil) }
+                TextField("搜索", text: $model.searchText, prompt: Text("Type a word, leave a trace…").foregroundStyle(.tertiary))
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 22, weight: .medium))
+                    .focused($focused)
+                    .onSubmit { Task { await model.lookup() } }
+                    .onExitCommand { NotificationCenter.default.post(name: .wordSnapHidePanel, object: nil) }
 
             if model.phase == .loading {
                 ProgressView()
