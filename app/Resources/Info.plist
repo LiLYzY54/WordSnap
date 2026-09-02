@@ -5,8 +5,8 @@
     <key>CFBundleName</key><string>WordSnap</string>
     <key>CFBundleDisplayName</key><string>WordSnap</string>
     <key>CFBundleIdentifier</key><string>com.wordsnap.app</string>
-    <key>CFBundleVersion</key><string>1</string>
-    <key>CFBundleShortVersionString</key><string>1.0.0</string>
+    <key>CFBundleVersion</key><string>2</string>
+    <key>CFBundleShortVersionString</key><string>1.1.0</string>
     <key>CFBundlePackageType</key><string>APPL</string>
     <key>CFBundleExecutable</key><string>WordSnap</string>
     <key>LSMinimumSystemVersion</key><string>26.0</string>
