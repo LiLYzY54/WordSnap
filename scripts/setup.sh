@@ -12,7 +12,9 @@ NC='\033[0m'
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 APP_DIR="$PROJECT_ROOT/app"
-BUILD_DIR="$PROJECT_ROOT/build"
+# 构建产物放 ~/Library：该目录默认不被 Spotlight 索引，避免每次构建
+# 都往 LaunchServices/Spotlight 里注册一份 WordSnap.app 幽灵分身
+BUILD_DIR="$HOME/Library/Developer/Xcode/WordSnap"
 
 echo -e "${BLUE}==> WordSnap Build Setup${NC}"
 echo ""

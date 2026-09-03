@@ -63,8 +63,8 @@ Xcode 工程不入库，由 [XcodeGen](https://github.com/yonaskolb/XcodeGen) �
 # 一键构建（需要 Xcode 26+ 和 xcodegen；首次克隆直接跑即可）
 ./scripts/setup.sh
 
-# 运行应用
-open build/DerivedData/Build/Products/Debug/WordSnap.app
+# 运行应用（构建产物在 ~/Library/Developer/Xcode/WordSnap，不被 Spotlight 索引）
+open ~/Library/Developer/Xcode/WordSnap/Build/Products/Debug/WordSnap.app
 
 # 单元测试（解析 / 分帧解码 / 表格写入 / 词笔记 / 统计等纯逻辑）
 xcodebuild test -project app/WordSnap.xcodeproj -scheme WordSnap -destination 'platform=macOS'
