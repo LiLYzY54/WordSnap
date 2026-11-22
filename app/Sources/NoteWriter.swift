@@ -22,46 +22,65 @@ enum NoteWriter {
 
     // MARK: Write
 
-    /// 不存在则按模板创建。返回 true = 本次新建。
-    @discardableResult
-    static func writeIfMissing(_ entry: WordEntry, tablePath: String = WordService.obsidianFile) -> Bool {
-        let path = notePath(for: entry.word, tablePath: tablePath)
-        guard !FileManager.default.fileExists(atPath: path) else { return false }
-        do {
-            try FileManager.default.createDirectory(
-                atPath: noteDirectory(tablePath: tablePath), withIntermediateDirectories: true)
-            try template(for: entry).write(toFile: path, atomically: true, encoding: .utf8)
-            return true
-        } catch {
-            NSLog("WordSnap [note] create failed for %@: %@", entry.word, String(describing: error))
-            return false
+    private static func noteExists(at path: String) throws -> Bool {
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory) else { return false }
+        guard !isDirectory.boolValue else {
+            throw CocoaError(.fileWriteFileExists, userInfo: [
+                NSFilePathErrorKey: path,
+                NSLocalizedDescriptionKey: "词笔记路径被文件夹占用：\(path)",
+            ])
         }
+        return true
     }
 
-    /// 「我的痕迹」下追加一行重逢记录；笔记不存在则先补建（此时无需追加）。
+    /// 不存在则按模板创建。返回 true = 本次新建。
+    @discardableResult
+    static func writeIfMissing(_ entry: WordEntry, tablePath: String = WordService.obsidianFile) throws -> Bool {
+        let path = notePath(for: entry.word, tablePath: tablePath)
+        guard try !noteExists(at: path) else { return false }
+        try FileManager.default.createDirectory(
+            atPath: noteDirectory(tablePath: tablePath), withIntermediateDirectories: true)
+        try template(for: entry).write(toFile: path, atomically: true, encoding: .utf8)
+        return true
+    }
+
+    /// 「我的痕迹」下追加一行重逢记录；返回 true 表示笔记缺失并在本次补建。
+    @discardableResult
     static func appendEncounter(_ entry: WordEntry,
                                 note: String = "在阅读中又遇到了它",
-                                tablePath: String = WordService.obsidianFile) {
+                                tablePath: String = WordService.obsidianFile) throws -> Bool {
         let path = notePath(for: entry.word, tablePath: tablePath)
-        if writeIfMissing(entry, tablePath: tablePath) { return }
-        guard let raw = try? String(contentsOfFile: path, encoding: .utf8) else { return }
-        guard let markerRange = raw.range(of: "## 我的痕迹") else { return }
+        if try writeIfMissing(entry, tablePath: tablePath) { return true }
+        let raw = try String(contentsOfFile: path, encoding: .utf8)
+        let encounter = "- \(entry.date) \(note)"
 
-        // 插到标记行行尾之后，保持 flashcard 行留在文末
-        let insertPoint = raw.range(of: "\n", range: markerRange.upperBound..<raw.endIndex)?
-            .lowerBound ?? raw.endIndex
         var out = raw
-        out.insert(contentsOf: "\n- \(entry.date) \(note)", at: insertPoint)
-        try? out.write(toFile: path, atomically: true, encoding: .utf8)
+        if let marker = raw.range(of: #"(?m)^## 我的痕迹[ \t]*\r?$"#, options: .regularExpression) {
+            // Insert after the heading without replacing any user-authored text.
+            out.insert(contentsOf: "\n\(encounter)", at: marker.upperBound)
+        } else {
+            let section = "## 我的痕迹\n\(encounter)\n\n"
+            let cardPattern = "(?m)^" + NSRegularExpression.escapedPattern(for: entry.word) + "::"
+            if let card = raw.range(of: cardPattern, options: .regularExpression) {
+                out.insert(contentsOf: "\n" + section, at: card.lowerBound)
+            } else {
+                out += (raw.hasSuffix("\n") ? "\n" : "\n\n") + section
+            }
+        }
+        try out.write(toFile: path, atomically: true, encoding: .utf8)
+        return false
     }
 
     /// 撤销窗口专用：删除本次保存新建的笔记（只对新建标记调用）。
     @discardableResult
-    static func deleteNote(for word: String, tablePath: String = WordService.obsidianFile) -> Bool {
+    static func deleteNote(for word: String, tablePath: String = WordService.obsidianFile) throws -> Bool {
+        let path = notePath(for: word, tablePath: tablePath)
+        guard try noteExists(at: path) else { return false }
         do {
-            try FileManager.default.removeItem(atPath: notePath(for: word, tablePath: tablePath))
+            try FileManager.default.removeItem(atPath: path)
             return true
-        } catch {
+        } catch let error as CocoaError where error.code == .fileNoSuchFile {
             return false
         }
     }

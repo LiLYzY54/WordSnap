@@ -25,7 +25,7 @@ final class NoteWriterTests: XCTestCase {
     }
 
     func testTemplateRendersFrontmatterAndFlashcard() throws {
-        XCTAssertTrue(NoteWriter.writeIfMissing(entry(), tablePath: tablePath))
+        XCTAssertTrue(try NoteWriter.writeIfMissing(entry(), tablePath: tablePath))
         let note = try String(contentsOfFile: NoteWriter.notePath(for: "serendipity", tablePath: tablePath),
                               encoding: .utf8)
         XCTAssertTrue(note.contains("word: serendipity"))
@@ -45,19 +45,19 @@ final class NoteWriterTests: XCTestCase {
     }
 
     func testWriteIfMissingNeverOverwrites() throws {
-        XCTAssertTrue(NoteWriter.writeIfMissing(entry(), tablePath: tablePath))
+        XCTAssertTrue(try NoteWriter.writeIfMissing(entry(), tablePath: tablePath))
         let path = NoteWriter.notePath(for: "serendipity", tablePath: tablePath)
         let original = try String(contentsOfFile: path, encoding: .utf8)
         let mutated = entry(meaning: "不同的释义")
-        XCTAssertFalse(NoteWriter.writeIfMissing(mutated, tablePath: tablePath),
+        XCTAssertFalse(try NoteWriter.writeIfMissing(mutated, tablePath: tablePath),
                        "已存在的笔记绝不覆盖")
         XCTAssertEqual(try String(contentsOfFile: path, encoding: .utf8), original)
     }
 
     func testAppendEncounterInsertsUnderTraceSection() throws {
-        XCTAssertTrue(NoteWriter.writeIfMissing(entry(), tablePath: tablePath))
-        NoteWriter.appendEncounter(entry(), tablePath: tablePath)
-        NoteWriter.appendEncounter(entry(), note: "又在论文里见到了", tablePath: tablePath)
+        XCTAssertTrue(try NoteWriter.writeIfMissing(entry(), tablePath: tablePath))
+        XCTAssertFalse(try NoteWriter.appendEncounter(entry(), tablePath: tablePath))
+        XCTAssertFalse(try NoteWriter.appendEncounter(entry(), note: "又在论文里见到了", tablePath: tablePath))
         let note = try String(contentsOfFile: NoteWriter.notePath(for: "serendipity", tablePath: tablePath),
                               encoding: .utf8)
         XCTAssertTrue(note.contains("- 2026-08-27 在阅读中又遇到了它"))
@@ -66,10 +66,63 @@ final class NoteWriterTests: XCTestCase {
     }
 
     func testAppendEncounterBackfillsMissingNote() throws {
-        NoteWriter.appendEncounter(entry(), tablePath: tablePath)
+        XCTAssertTrue(try NoteWriter.appendEncounter(entry(), tablePath: tablePath))
         XCTAssertTrue(FileManager.default.fileExists(
             atPath: NoteWriter.notePath(for: "serendipity", tablePath: tablePath)),
             "笔记缺失时先补建")
+    }
+
+    func testCreationFailureThrowsAndCanBeRetried() throws {
+        let directory = NoteWriter.noteDirectory(tablePath: tablePath)
+        try "blocking file".write(toFile: directory, atomically: true, encoding: .utf8)
+
+        XCTAssertThrowsError(try NoteWriter.writeIfMissing(entry(), tablePath: tablePath))
+        XCTAssertThrowsError(try NoteWriter.appendEncounter(entry(), tablePath: tablePath))
+        XCTAssertEqual(try String(contentsOfFile: directory, encoding: .utf8), "blocking file")
+
+        try FileManager.default.removeItem(atPath: directory)
+        XCTAssertTrue(try NoteWriter.writeIfMissing(entry(), tablePath: tablePath))
+    }
+
+    func testEncounterReadFailurePreservesOriginalBytes() throws {
+        try FileManager.default.createDirectory(atPath: NoteWriter.noteDirectory(tablePath: tablePath),
+                                                withIntermediateDirectories: true)
+        let path = NoteWriter.notePath(for: "serendipity", tablePath: tablePath)
+        let original = Data([0xFF, 0xFE, 0x00, 0x61])
+        try original.write(to: URL(fileURLWithPath: path))
+
+        XCTAssertThrowsError(try NoteWriter.appendEncounter(entry(), tablePath: tablePath))
+        XCTAssertEqual(try Data(contentsOf: URL(fileURLWithPath: path)), original)
+    }
+
+    func testMissingTraceHeadingPreservesUserNotesAndFinalFlashcard() throws {
+        XCTAssertTrue(try NoteWriter.writeIfMissing(entry(), tablePath: tablePath))
+        let path = NoteWriter.notePath(for: "serendipity", tablePath: tablePath)
+        let original = "# My own notes\n\nUser-authored context.\n\nserendipity::奇缘\n"
+        try original.write(toFile: path, atomically: true, encoding: .utf8)
+
+        XCTAssertFalse(try NoteWriter.appendEncounter(entry(), tablePath: tablePath))
+        let updated = try String(contentsOfFile: path, encoding: .utf8)
+        XCTAssertTrue(updated.hasPrefix("# My own notes\n\nUser-authored context."))
+        XCTAssertTrue(updated.contains("## 我的痕迹\n- 2026-08-27 在阅读中又遇到了它"))
+        XCTAssertTrue(updated.hasSuffix("serendipity::奇缘\n"))
+    }
+
+    func testDeleteNoteUsesExplicitTablePathAndMissingNoteIsHarmless() throws {
+        XCTAssertTrue(try NoteWriter.writeIfMissing(entry(), tablePath: tablePath))
+        XCTAssertTrue(try NoteWriter.deleteNote(for: "serendipity", tablePath: tablePath))
+        XCTAssertFalse(try NoteWriter.deleteNote(for: "serendipity", tablePath: tablePath))
+    }
+
+    func testDirectoryAtNotePathIsAnErrorAndIsNeverDeleted() throws {
+        let path = NoteWriter.notePath(for: "serendipity", tablePath: tablePath)
+        try FileManager.default.createDirectory(atPath: path, withIntermediateDirectories: true)
+        let marker = path + "/keep.txt"
+        try "keep".write(toFile: marker, atomically: true, encoding: .utf8)
+
+        XCTAssertThrowsError(try NoteWriter.writeIfMissing(entry(), tablePath: tablePath))
+        XCTAssertThrowsError(try NoteWriter.deleteNote(for: "serendipity", tablePath: tablePath))
+        XCTAssertEqual(try String(contentsOfFile: marker, encoding: .utf8), "keep")
     }
 
     func testStarsConversion() {

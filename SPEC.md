@@ -30,8 +30,11 @@ app/Sources/
 ├── SettingsWindow.swift     # 设置窗口：快捷键录制 / Obsidian 路径选择
 ├── StatusBarController.swift# 菜单栏：今日一词 / 热力图 / 呼出面板 / 设置 / 登录项 / 退出
 ├── FloatingWindow.swift     # NSPanel + 玻璃容器；胶囊↔面板形变；Esc 拦截；剪贴板预填
-├── SearchView.swift         # SwiftUI 界面 + SearchModel 状态机（含 saved/reunion 与撤销）
-├── Pronouncer.swift         # 有道 dictvoice 美音（AVPlayer）
+├── SearchView.swift         # SwiftUI 界面（结果、保存、部分失败与重试）
+├── SearchModel.swift        # 查询任务/计时器生命周期、保存及路径绑定的撤销凭据
+├── Pronouncer.swift         # 有道 dictvoice 美音（预取缓存 + AVAudioPlayer）
+├── OneShotContinuation.swift# 跨队列完成/超时竞争的一次性恢复保护
+├── AsyncRequestGate.swift   # 请求和预热共用的可取消串行队列
 ├── HeatmapView.swift        # 近 16 周打卡格（菜单内嵌）
 ├── NoteWriter.swift         # 词笔记：模板渲染 / 幂等创建 / 重逢追加 / 撤销删除
 └── WordService.swift        # 核心域逻辑：
@@ -53,9 +56,14 @@ app/Sources/
       ✓ 得到 WordEntry（word/音标/词性/中文释义/英文释义/例句/来源/日期）
       ✗ 释义为空 → notFound 直接显示「未找到该单词」（不走代理重试）
       ✗ JSON 异常 → proxyFetch 兜底再试一次
-  → ⌘Enter 保存 → append 表格行（重复词提示已在表）→ 1.4s 后自动收起
+  → ⌘Enter 保存 → append 表格行（重复词提示已在表）→ 4s 后自动收起
+      ✗ 词笔记写入失败 → 保留部分失败提示，仅重试词笔记，不重复写表
 Esc / 隐藏通知 → orderOut
 ```
+
+每次查询带请求编号，旧任务即使在取消后返回，也不能覆盖新结果。新查询、
+重置和隐藏窗口会取消旧计时器。撤销凭据保留保存时的词表路径，后续设置
+变更不会将撤销指向其他词库。
 
 ## 数据格式
 
@@ -92,8 +100,8 @@ tags: [vocabulary, flashcards]
 serendipity::意外发现的乐趣
 ```
 
-路径解析优先级：设置窗口（写 `~/.wordsnap.json`）> 环境变量
-`WORDSNAP_OBSIDIAN_PATH` > 默认 `~/Documents/Obsidian/English Vocabulary Learning.md`。
+路径解析优先级：环境变量 `WORDSNAP_OBSIDIAN_PATH` > 设置窗口
+（写 `~/.wordsnap.json`）> 默认 `~/Documents/Obsidian/English Vocabulary Learning.md`。
 
 ## Obsidian 管理端（obsidian-plugin/）
 
@@ -102,7 +110,7 @@ serendipity::意外发现的乐趣
   frontmatter status）、统计页（总量/月度柱状/16 周热力图）
 - 数据读取用与 App 端 `tableRows` 相同的解析口径（别名折叠/转义竖线），
   词笔记元数据走 Obsidian metadataCache（零文件 IO）
-- vault: Daily_Thoughts；表格路径与笔记目录均可在插件设置中调整
+- 默认使用 vault 根目录的词表与 `Vocabulary/`，自定义位置需在插件设置中调整
 
 ## 错误处理
 
@@ -115,10 +123,13 @@ serendipity::意外发现的乐趣
 
 ## 测试
 
-纯逻辑全部可单测（`app/Tests/WordSnapTests/`，33 例）：chunked 分帧解码、
+测试位于 `app/Tests/WordSnapTests/`：chunked 分帧解码、
 状态行解析、有道 JSON 解析三路兜底、中英拆分、表格行转义/去重、
 保存统计（总词数/连续天数）、suggest 候选解析、词笔记模板（幂等/追加/
-文件名净化）、今日一词轮换、热力图计数。
+文件名净化）、今日一词轮换、热力图计数，以及读取失败保护、查询乱序、
+过期计时器、词笔记重试、跨路径撤销与网络完成/超时竞争。
+插件测试使用 Node 原生测试框架和内存 Obsidian API，覆盖并发正文保留和评分交互，
+不读取真实 vault。
 
 ```bash
 xcodebuild test -project app/WordSnap.xcodeproj -scheme WordSnap -destination 'platform=macOS'

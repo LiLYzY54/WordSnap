@@ -170,6 +170,7 @@ final class WordService {
     // MARK: Lookup
 
     func lookup(_ rawWord: String) async throws -> WordEntry {
+        try Task.checkCancellation()
         let word = rawWord.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !word.isEmpty else { throw LookupError.notFound([]) }
 
@@ -187,7 +188,10 @@ final class WordService {
         var directData: Data?
         do {
             directData = try await YoudaoDirectClient.shared.lookup(word)
+        } catch is CancellationError {
+            throw CancellationError()
         } catch {
+            try Task.checkCancellation()
             NSLog("WordSnap [direct] failed for %@: %@", word, String(describing: error))
         }
 
@@ -199,23 +203,28 @@ final class WordService {
                 return entry
             } catch LookupError.notFound {
                 Self.logTiming(word: word, ms: Date().timeIntervalSince(start) * 1000, via: "direct:not-found")
-                throw await Self.notFoundWithSuggestions(word)
+                throw try await Self.notFoundWithSuggestions(word)
             } catch {
                 // 响应解析失败（接口格式变化等）：降级走代理再试一次
             }
         }
 
         // 慢路径兑底：走系统代理的 URLSession（限时）
+        try Task.checkCancellation()
         do {
             let data = try await proxyFetch(word)
+            try Task.checkCancellation()
             let entry = try Self.parse(data, word: word)
             Self.logTiming(word: word, ms: Date().timeIntervalSince(start) * 1000, via: "proxy")
             cacheResult(word, entry: entry)
             return entry
         } catch LookupError.notFound {
             Self.logTiming(word: word, ms: Date().timeIntervalSince(start) * 1000, via: "proxy:not-found")
-            throw await Self.notFoundWithSuggestions(word)
+            throw try await Self.notFoundWithSuggestions(word)
+        } catch is CancellationError {
+            throw CancellationError()
         } catch {
+            try Task.checkCancellation()
             Self.logTiming(word: word, ms: Date().timeIntervalSince(start) * 1000, via: "failed")
             throw LookupError.network("网络连接失败，请检查网络后重试")
         }
@@ -223,8 +232,11 @@ final class WordService {
 
     // MARK: Suggest（查无此词时的纠错候选）
 
-    private static func notFoundWithSuggestions(_ word: String) async -> LookupError {
-        .notFound(await suggestions(for: word))
+    private static func notFoundWithSuggestions(_ word: String) async throws -> LookupError {
+        try Task.checkCancellation()
+        let candidates = await suggestions(for: word)
+        try Task.checkCancellation()
+        return .notFound(candidates)
     }
 
     /// 有道 suggest 候选词，1.5s 上限，失败静默（纠错是锦上添花，不能拖慢主流程）。
@@ -296,19 +308,41 @@ final class WordService {
     /// dict.youdao.com — immune to TUN fake-IP DNS. Reuses one connection
     /// (HTTP/1.1 keep-alive) so repeat lookups skip DNS + TLS handshake.
     ///
-    /// actor 隔离：connection/connectionIP 只在 actor 内串行访问。
-    /// 此前的裸 class 里，warmUp 的后台任务和主线程的快速连查会同时
-    /// 读写 connection、各自开连接互相覆盖——教科书式 data race。
+    /// actor 保护状态；requestGate 额外保证整个异步请求独占连接，
+    /// 包括 await 挂起期间，预热也遵守同一队列。
     actor YoudaoDirectClient {
 
         static let shared = YoudaoDirectClient()
 
         private let host = "dict.youdao.com"
-        /// NWConnection 的全部回调都落在同一条串行队列上，
-        /// continuation 的 done 标记因此天然原子，无需额外加锁。
+        /// NWConnection 的回调使用同一条串行队列；超时可来自其他队列，
+        /// continuation 由 OneShotContinuation 保证只恢复一次。
         private let queue = DispatchQueue(label: "com.wordsnap.youdao", qos: .userInitiated)
         private var connection: NWConnection?
         private var connectionIP: String?
+        private let requestGate = AsyncRequestGate()
+
+        struct Transport: Sendable {
+            var connect: @Sendable (String) async throws -> NWConnection
+            var exchange: @Sendable (NWConnection, String) async throws -> Data
+        }
+
+        private let transport: Transport?
+        private let configuredIPs: [String]?
+
+        private init() {
+            transport = nil
+            configuredIPs = nil
+        }
+
+        /// An injected transport and IP list keep isolated clients independent
+        /// of DNS, the network, and the user's remembered IP preferences.
+        init(ips: [String], transport: Transport) {
+            configuredIPs = ips
+            self.transport = transport
+        }
+
+        private var candidateIPs: [String] { configuredIPs ?? Self.ipList }
 
         private static let seedIPs = ["220.197.31.37", "123.58.167.197", "220.197.27.26"]
         private static let maxIPs = 8
@@ -331,17 +365,27 @@ final class WordService {
 
         /// Try IPs in order (best remembered first); reuse the live connection.
         func lookup(_ word: String) async throws -> Data {
+            try await requestGate.withPermit {
+                try await self.performLookup(word)
+            }
+        }
+
+        private func performLookup(_ word: String) async throws -> Data {
             scheduleRefreshIfStale()
-            let ips = Self.ipList.prefix(Self.maxAttemptsPerLookup)
+            let ips = candidateIPs.prefix(Self.maxAttemptsPerLookup)
             var lastError: Error = LookupError.network("直连失败")
             for ip in ips {
+                try Task.checkCancellation()
                 do {
                     let data = try await request(word: word, ip: ip)
-                    Self.promote(ip)
+                    if configuredIPs == nil { Self.promote(ip) }
                     return data
+                } catch is CancellationError {
+                    throw CancellationError()
                 } catch {
+                    try Task.checkCancellation()
                     lastError = error
-                    Self.demote(ip)
+                    if configuredIPs == nil { Self.demote(ip) }
                 }
             }
             throw lastError
@@ -358,15 +402,22 @@ final class WordService {
 
         /// Open the persistent connection ahead of time so the first real
         /// lookup hits a live TLS pipe instead of paying connect latency.
-        /// （shared 是进程级单例，闭包强持有无害；勿加捕获列表——
-        ///   Swift 5 检查级别下显式捕获会让 Task 失去 actor 隔离推断。）
-        func warmUp() {
+        func warmUp() async {
+            try? await requestGate.withPermit {
+                try await self.prepareConnection()
+            }
+        }
+
+        private func prepareConnection() async throws {
             scheduleRefreshIfStale()
-            guard connection == nil else { return }
-            let ip = Self.ipList.first ?? Self.seedIPs[0]
-            Task {
-                self.connection = try? await self.openConnection(ip: ip)
-                if self.connection != nil { self.connectionIP = ip }
+            guard connection == nil, let ip = candidateIPs.first else { return }
+            do {
+                connection = try await makeConnection(ip: ip)
+                connectionIP = ip
+                try Task.checkCancellation()
+            } catch {
+                discardConnection()
+                throw error
             }
         }
 
@@ -377,6 +428,7 @@ final class WordService {
         /// 顺序为「学习到的成功 IP → 新解析结果 → 种子垫底」，且只在超过
         /// 刷新间隔时触发一次后台任务，不阻塞当前查询。
         private func scheduleRefreshIfStale() {
+            guard configuredIPs == nil else { return }
             let now = Date().timeIntervalSince1970
             guard now - UserDefaults.standard.double(forKey: Self.refreshedAtKey)
                     > Self.refreshInterval else { return }
@@ -452,14 +504,19 @@ final class WordService {
         }
 
         private func request(word: String, ip: String) async throws -> Data {
-            // 连接不匹配或已断：重建
-            if connection == nil || connectionIP != ip {
-                connection?.cancel()
-                connection = try await openConnection(ip: ip)
-                connectionIP = ip
+            let reusedConnection = connection != nil && connectionIP == ip
+            do {
+                return try await exchangeRequest(word: word, ip: ip)
+            } catch {
+                try Task.checkCancellation()
+                guard reusedConnection, !(error is CancellationError) else { throw error }
+                // A keep-alive socket may have closed while idle. Retry this IP
+                // once with a fresh connection before treating the IP as unhealthy.
+                return try await exchangeRequest(word: word, ip: ip)
             }
-            guard let conn = connection else { throw LookupError.network("直连失败") }
+        }
 
+        private func exchangeRequest(word: String, ip: String) async throws -> Data {
             let query = word.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? word
             let request = "GET /jsonapi?q=\(query) HTTP/1.1\r\n"
                 + "Host: \(host)\r\n"
@@ -468,14 +525,40 @@ final class WordService {
                 + "Connection: keep-alive\r\n\r\n"
 
             do {
-                return try await sendAndRead(conn, request: request)
+                try Task.checkCancellation()
+                // Only the gate's current owner can create, use, or cancel this connection.
+                if connection == nil || connectionIP != ip {
+                    discardConnection()
+                    connection = try await makeConnection(ip: ip)
+                    connectionIP = ip
+                }
+                try Task.checkCancellation()
+                guard let conn = connection else { throw LookupError.network("直连失败") }
+                let data: Data
+                if let transport {
+                    data = try await transport.exchange(conn, request)
+                } else {
+                    data = try await sendAndRead(conn, request: request)
+                }
+                // Finish the bounded in-flight operation before releasing the
+                // connection; cancellation must never cancel the next owner's socket.
+                try Task.checkCancellation()
+                return data
             } catch {
-                // 连接坏了：丢弃，下次重连
-                connection?.cancel()
-                connection = nil
-                connectionIP = nil
+                discardConnection()
                 throw error
             }
+        }
+
+        private func discardConnection() {
+            connection?.cancel()
+            connection = nil
+            connectionIP = nil
+        }
+
+        private func makeConnection(ip: String) async throws -> NWConnection {
+            if let transport { return try await transport.connect(ip) }
+            return try await openConnection(ip: ip)
         }
 
         private func openConnection(ip: String) async throws -> NWConnection {
@@ -487,22 +570,31 @@ final class WordService {
             let conn = NWConnection(host: .ipv4(address), port: 443, using: NWParameters(tls: tlsOptions))
 
             return try await withCheckedThrowingContinuation { continuation in
-                var done = false
-                func resume(_ result: Result<NWConnection, Error>) {
-                    guard !done else { return }
-                    done = true
-                    continuation.resume(with: result)
+                let completion = OneShotContinuation(continuation)
+                let timer = DispatchWorkItem {
+                    completion.resume(with: .failure(URLError(.timedOut))) {
+                        // This connection has not reached self.connection yet.
+                        conn.stateUpdateHandler = nil
+                        conn.cancel()
+                    }
                 }
-                let timer = DispatchWorkItem { resume(.failure(URLError(.timedOut))) }
-                DispatchQueue.global().asyncAfter(deadline: .now() + 1.5, execute: timer)
+                queue.asyncAfter(deadline: .now() + 1.5, execute: timer)
                 conn.stateUpdateHandler = { state in
                     switch state {
                     case .ready:
                         timer.cancel()
-                        resume(.success(conn))
+                        completion.resume(with: .success(conn)) {
+                            conn.stateUpdateHandler = nil
+                        }
                     case .failed(let error):
                         timer.cancel()
-                        resume(.failure(error))
+                        completion.resume(with: .failure(error)) {
+                            conn.stateUpdateHandler = nil
+                            conn.cancel()
+                        }
+                    case .cancelled:
+                        timer.cancel()
+                        completion.resume(with: .failure(URLError(.cancelled)))
                     default:
                         break
                     }
@@ -530,22 +622,19 @@ final class WordService {
         /// 而不是像旧实现那样把 403 的 HTML 页当成 JSON 去 decode。
         private func sendAndRead(_ conn: NWConnection, request: String) async throws -> Data {
             try await withCheckedThrowingContinuation { continuation in
-                var done = false
-                func resume(_ result: Result<Data, Error>) {
-                    guard !done else { return }
-                    done = true
-                    continuation.resume(with: result)
+                let completion = OneShotContinuation(continuation)
+                let deadline = DispatchWorkItem {
+                    completion.resume(with: .failure(URLError(.timedOut)))
                 }
-                let deadline = DispatchWorkItem { resume(.failure(URLError(.timedOut))) }
                 DispatchQueue.global().asyncAfter(deadline: .now() + 4, execute: deadline)
 
                 func succeed(_ data: Data) {
                     deadline.cancel()
-                    resume(.success(data))
+                    completion.resume(with: .success(data))
                 }
                 func fail(_ error: Error) {
                     deadline.cancel()
-                    resume(.failure(error))
+                    completion.resume(with: .failure(error))
                 }
 
                 var buffer = Data()
@@ -838,16 +927,20 @@ final class WordService {
     /// Append the entry as a Markdown table row. Read–modify–write atomically,
     /// creating the file (with header) when missing and never leaving stray
     /// blank lines. Skips words that are already in the table (dedupe).
-    func save(_ entry: WordEntry) throws -> SaveOutcome {
-        let path = Self.obsidianFile
+    func save(_ entry: WordEntry, tablePath path: String = WordService.obsidianFile) throws -> SaveOutcome {
         let directory = NSString(string: path).deletingLastPathComponent
         try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
 
         var content: String
-        if FileManager.default.fileExists(atPath: path),
-           let existing = try? String(contentsOfFile: path, encoding: .utf8),
-           !existing.isEmpty {
-            content = existing
+        do {
+            content = try String(contentsOfFile: path, encoding: .utf8)
+        } catch let error as CocoaError where error.code == .fileReadNoSuchFile {
+            content = ""
+        }
+
+        // Only a missing or successfully read empty file can become a new table.
+        // Propagate decoding/permission failures instead of replacing existing data.
+        if !content.isEmpty {
             if !content.hasSuffix("\n") { content += "\n" }
 
             // Dedupe: check the 单词 column (first cell) of existing rows only.
@@ -965,20 +1058,23 @@ final class WordService {
 
     /// 撤销最近一次保存：移除该词最后一行（去重保证唯一）。文件不存在则忽略。
     @discardableResult
-    func deleteRow(word: String) -> Bool {
-        let path = Self.obsidianFile
-        guard let content = try? String(contentsOfFile: path, encoding: .utf8) else { return false }
+    func deleteRow(word: String, tablePath path: String = WordService.obsidianFile) throws -> Bool {
+        guard !word.isEmpty else { return false }
+        let content: String
+        do {
+            content = try String(contentsOfFile: path, encoding: .utf8)
+        } catch let error as CocoaError where error.code == .fileReadNoSuchFile {
+            return false
+        }
         var lines = content.components(separatedBy: "\n")
         guard let index = lines.lastIndex(where: {
-            let trimmed = $0.trimmingCharacters(in: .whitespaces)
-            guard trimmed.hasPrefix("|") else { return false }
-            let first = trimmed.split(separator: "|", omittingEmptySubsequences: false)
-                .dropFirst().first.map(String.init) ?? ""
-            return Self.displayWord(first).lowercased() == word.lowercased()
+            guard let cells = Self.tableRows(in: $0).first else { return false }
+            return Self.displayWord(cells[0]).lowercased() == word.lowercased()
         }) else { return false }
         lines.remove(at: index)
         let out = lines.joined(separator: "\n")
-        return (try? out.write(toFile: path, atomically: true, encoding: .utf8)) != nil
+        try out.write(toFile: path, atomically: true, encoding: .utf8)
+        return true
     }
 
     /// True if any markdown table row in `content` has `word` as its first cell

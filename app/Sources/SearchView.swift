@@ -1,143 +1,6 @@
 import AppKit
 import SwiftUI
 
-// MARK: - Phase
-
-enum LookupPhase: Equatable {
-    case idle
-    case loading
-    case loaded(WordEntry)
-    case failed(String)
-    /// 保存成功：total = 词表总数
-    case saved(total: Int)
-    /// 重复保存：这个词之前已存过（重逢）
-    case reunion(entry: WordEntry, previousDate: String)
-}
-
-// MARK: - Model
-
-@MainActor
-final class SearchModel: ObservableObject {
-
-    @Published var searchText = ""
-    @Published var phase: LookupPhase = .idle
-    /// 全选信号：token 自增触发一次输入框全选（配合剪贴板预填）
-    @Published var selectAllToken = 0
-    /// notFound 时的纠错候选（suggest 接口）
-    @Published var suggestions: [String] = []
-    private var lastPrefilledWord: String?
-
-    // 撤销窗口状态
-    private var lastSavedEntry: WordEntry?
-    private var lastNoteCreated = false
-    private var hideWorkItem: DispatchWorkItem?
-
-    /// ⌘L 呼出时若剪贴板正好是单个英文词，直接预填（回车即查）。
-    /// 记忆上次预填词避免同一词反复出现；不清空剪贴板——那是有破坏性的。
-    func prefillFromClipboard() {
-        guard searchText.isEmpty,
-              let raw = NSPasteboard.general.string(forType: .string)?
-                  .trimmingCharacters(in: .whitespacesAndNewlines),
-              let word = Self.clipboardWord(raw),
-              word != lastPrefilledWord else { return }
-        lastPrefilledWord = word
-        searchText = word
-        selectAllToken += 1
-    }
-
-    private static func clipboardWord(_ s: String) -> String? {
-        guard s.count <= 40,
-              let regex = try? NSRegularExpression(pattern: #"^[A-Za-z][A-Za-z\-']*$"#),
-              regex.firstMatch(in: s, range: NSRange(s.startIndex..., in: s)) != nil else { return nil }
-        return s
-    }
-
-    func lookup() async {
-        let word = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !word.isEmpty else { return }
-        phase = .loading
-        suggestions = []
-
-        do {
-            let entry = try await WordService.shared.lookup(word)
-            Pronouncer.shared.prefetch(entry.word)
-            phase = .loaded(entry)
-        } catch let error as LookupError {
-            if case .notFound(let candidates) = error { suggestions = candidates }
-            phase = .failed(error.localizedDescription)
-        } catch {
-            phase = .failed(error.localizedDescription)
-        }
-    }
-
-    /// 点击纠错候选：换词立即重查
-    func lookupReplacement(_ word: String) {
-        searchText = word
-        suggestions = []
-        Task { await lookup() }
-    }
-
-    func save() {
-        guard case .loaded(let entry) = phase else { return }
-        do {
-            let outcome = try WordService.shared.save(entry)
-            lastSavedEntry = entry
-            if outcome.saved {
-                lastNoteCreated = NoteWriter.writeIfMissing(entry)
-                phase = .saved(total: outcome.totalCount)
-            } else {
-                NoteWriter.appendEncounter(entry)
-                lastNoteCreated = false // 笔记非本次新建，撤销不动它
-                phase = .reunion(entry: entry,
-                                 previousDate: outcome.existingDate ?? "")
-            }
-            // 4s 撤销窗口：给误按 ⌘Enter 留后悔药
-            scheduleAutoHide(seconds: 4)
-        } catch {
-            phase = .failed("保存失败：\(error.localizedDescription)")
-        }
-    }
-
-    /// 撤销刚完成的保存：删表行；若词笔记是本次新建的也一并删除。
-    func undoSave() {
-        guard let entry = lastSavedEntry else { return }
-        hideWorkItem?.cancel()
-        if WordService.shared.deleteRow(word: entry.word), lastNoteCreated {
-            NoteWriter.deleteNote(for: entry.word)
-        }
-        lastSavedEntry = nil
-        searchText = ""
-        phase = .idle
-        scheduleAutoHide(seconds: 0.8, hideOnly: true)
-    }
-
-    private func scheduleAutoHide(seconds: TimeInterval, hideOnly: Bool = false) {
-        hideWorkItem?.cancel()
-        let work = DispatchWorkItem { [weak self] in
-            guard let self else { return }
-            if !hideOnly { self.reset() }
-            NotificationCenter.default.post(name: .wordSnapHidePanel, object: nil)
-        }
-        hideWorkItem = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + seconds, execute: work)
-    }
-
-    private static let shortDateFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.dateFormat = "yyyy-MM-dd"
-        return f
-    }()
-
-    func reset() {
-        searchText = ""
-        phase = .idle
-    }
-}
-
-extension Notification.Name {
-    static let wordSnapHidePanel = Notification.Name("wordSnapHidePanel")
-}
-
 // MARK: - Root view (single glass piece: capsule that grows into a panel)
 
 struct RootSearchView: View {
@@ -166,7 +29,7 @@ struct RootSearchView: View {
             }
         )
         .onPreferenceChange(ContentHeightKey.self) { onHeightChange($0) }
-        .onChange(of: model.selectAllToken) { _ in
+        .onChange(of: model.selectAllToken) { _, _ in
             // 等字段编辑器（NSText）就位后全选：预填后直接输入即替换
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
                 (NSApp.keyWindow?.firstResponder as? NSText)?.selectAll(nil)
@@ -293,9 +156,27 @@ struct RootSearchView: View {
                     .font(.system(size: 12))
                     .foregroundStyle(.tertiary)
                     .help("移除刚写入的记录")
+                if let error = model.undoError {
+                    Text(error).font(.system(size: 12)).foregroundStyle(.red)
+                }
             }
             .frame(maxWidth: .infinity, alignment: .center)
             .padding(.vertical, 8)
+        case .noteFailed(let message):
+            VStack(alignment: .leading, spacing: 8) {
+                Label(message, systemImage: "exclamationmark.triangle.fill")
+                    .font(.system(size: 14))
+                    .foregroundStyle(.orange)
+                HStack {
+                    Button("重试词笔记") { model.retryNoteSave() }
+                    if model.canUndoSave {
+                        Button("撤销保存") { model.undoSave() }
+                    }
+                }
+                if let error = model.undoError {
+                    Text(error).font(.system(size: 12)).foregroundStyle(.red)
+                }
+            }
         case .reunion(let entry, let previousDate):
             // 忘词恰恰是间隔重复的信号：把「报错」翻转成「重逢」
             HStack(spacing: 8) {

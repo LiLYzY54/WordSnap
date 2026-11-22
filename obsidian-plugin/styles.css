@@ -25,6 +25,18 @@
 .ws-refresh {
   margin-left: auto;
 }
+.ws-config-warning {
+  margin: 16px 0;
+  padding: 12px 14px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  color: var(--text-warning, var(--text-normal));
+  overflow-wrap: anywhere;
+}
+.ws-pill:disabled, .ws-grade:disabled {
+  opacity: 0.55;
+  cursor: wait;
+}
 
 /* ---------- 页签 ---------- */
 .ws-tabs {
@@ -300,3 +312,87 @@
   border-radius: 4px;
   font-size: 12px;
 }
+
+/* Reading-room layout: scoped to WordSnap, never changes the vault theme. */
+.ws-root {
+  --ws-paper: color-mix(in srgb, var(--background-primary) 94%, #e6d5b6);
+  --ws-ink: var(--text-normal);
+  --ws-accent: #547564;
+  box-sizing: border-box;
+  container-type: inline-size;
+  background: var(--ws-paper);
+  padding: clamp(20px, 4vw, 56px);
+}
+.ws-root > * { max-width: 1160px; margin-left: auto; margin-right: auto; }
+.ws-header { align-items: center; margin-bottom: 36px; }
+.ws-header h2 { font-size: 18px; letter-spacing: -.5px; }
+.ws-count { padding-left: 14px; border-left: 1px solid var(--background-modifier-border); }
+.ws-refresh { margin-left: auto; }
+.ws-hero { padding: 12px 0 24px; }
+.ws-eyebrow { color: var(--ws-accent); font-size: 10px; letter-spacing: 2.4px; font-weight: 700; }
+.ws-hero h1 { font-size: clamp(25px, 4vw, 42px); letter-spacing: -1.2px; line-height: 1.35; margin: 15px 0 12px; }
+.ws-hero p { color: var(--text-muted); font-size: 14px; margin: 0 0 24px; }
+.ws-root button.ws-start { background: var(--ws-accent); color: #fff; border: 0; border-radius: 10px; padding: 12px 20px; height: auto; box-shadow: none; font-weight: 600; }
+.ws-overview { display: flex; flex-wrap: wrap; gap: 40px; margin-top: 32px; padding-top: 24px; border-top: 1px solid var(--background-modifier-border); }
+.ws-metric { display: flex; align-items: baseline; gap: 10px; }
+.ws-metric strong { font-size: 27px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.ws-metric span { font-size: 12px; color: var(--text-muted); }
+.ws-tabs { margin-top: 12px; margin-bottom: 24px; }
+.ws-root .ws-tab { box-shadow: none; padding: 9px 18px; height: auto; }
+.ws-root .ws-tab.ws-active { border-bottom-color: var(--ws-accent); color: var(--ws-accent); }
+.ws-toolbar { gap: 14px; margin-bottom: 24px; }
+.ws-root input.ws-search { background: var(--background-primary); height: 38px; max-width: none; }
+.ws-root .ws-chip { box-shadow: none; height: auto; padding: 7px 12px; }
+.ws-root .ws-chip.ws-chip-active { background: var(--ws-accent); border-color: var(--ws-accent); color: #fff; }
+.ws-grid { grid-template-columns: repeat(auto-fill, minmax(min(100%, 265px), 1fr)); gap: 18px; }
+.ws-card { border-radius: 14px; padding: 24px; gap: 12px; min-width: 0; background: var(--background-primary); box-shadow: 0 2px 7px #00000003; }
+.ws-card-top { flex-wrap: wrap; }
+.ws-root button.ws-word { font-family: Georgia, 'Times New Roman', serif; font-size: 27px; letter-spacing: -.5px; font-weight: 500; background: transparent; box-shadow: none; border: 0; padding: 0; height: auto; white-space: normal; text-align: left; overflow-wrap: anywhere; }
+.ws-card .ws-meaning { font-size: 14px; line-height: 1.7; }
+.ws-card .ws-example { color: var(--text-muted); line-height: 1.7; padding-left: 12px; border-left: 2px solid var(--background-modifier-border); }
+.ws-card-foot { padding-top: 18px; margin-top: auto; gap: 6px; flex-wrap: wrap; }
+.ws-root .ws-pill { box-shadow: none; height: auto; padding: 4px 9px; }
+.ws-root .ws-note-link { box-shadow: none; background: transparent; padding: 0; height: auto; border: 0; }
+.ws-root .ws-audio-btn { box-shadow: none; }
+.ws-flipcard { background: var(--background-primary); padding: 56px 32px 36px; border-radius: 20px; }
+.ws-flip-word { font-family: Georgia, 'Times New Roman', serif; font-weight: 500; overflow-wrap: anywhere; }
+.ws-root .ws-reveal-btn { background: var(--ws-accent); color: #fff; box-shadow: none; height: auto; padding: 12px 24px; }
+.ws-root button:focus-visible { outline: 2px solid var(--ws-accent); outline-offset: 4px; }
+.theme-dark .ws-root { --ws-accent: #86ab94; }
+.theme-dark .ws-root button.ws-start, .theme-dark .ws-root .ws-reveal-btn, .theme-dark .ws-root .ws-chip.ws-chip-active { color: #17251d; }
+@container (max-width: 500px) {
+  .ws-overview { gap: 18px; }
+  .ws-metric { flex-direction: column; gap: 2px; }
+  .ws-header { gap: 8px; margin-bottom: 20px; }
+  .ws-count { padding-left: 8px; }
+  .ws-flipcard { padding: 32px 18px; }
+  .ws-grades { flex-wrap: wrap; }
+}
+@media (prefers-reduced-motion: reduce) { .ws-card { transition: none; } .ws-card:hover { transform: none; } }
+/* Optional cssclasses: wordsnap-note in reusable word notes. */
+.wordsnap-note.markdown-preview-view { --h1-font: Georgia, serif; --h1-size: 2.6em; --h2-size: 1.15em; --h2-color: var(--text-muted); }
+.wordsnap-note .markdown-preview-sizer { max-width: 720px; margin: auto; }
+.wordsnap-note .callout { border-radius: 12px; }
+.ws-header { margin-bottom: 18px; }
+.ws-hero { padding: 4px 0 16px; }
+.ws-hero h1 { font-size: clamp(25px, 3vw, 32px); }
+.ws-hero p { margin-bottom: 18px; }
+.ws-overview { margin-top: 22px; padding-top: 16px; }
+/* Paper cards inside a restrained, Notion-like workspace. */
+.ws-root { --ws-paper: color-mix(in srgb, var(--background-primary) 97%, #e6d5b6); }
+.ws-header h2 { font-size: 16px; font-weight: 650; }
+.ws-eyebrow { color: var(--text-muted); letter-spacing: 1.5px; }
+.ws-hero h1 { font-size: clamp(24px, 3vw, 30px); font-weight: 650; letter-spacing: -.7px; }
+.ws-root .ws-tab { background: transparent; border-radius: 0; }
+.ws-root .ws-chip { border-radius: 6px; padding: 6px 10px; }
+.ws-root .ws-chip.ws-chip-active { background: var(--background-modifier-hover); color: var(--text-normal); border-color: var(--background-modifier-border); }
+.theme-dark .ws-root .ws-chip.ws-chip-active { color: var(--text-normal); }
+.ws-card { border-radius: 9px; padding: 20px; box-shadow: none; transition: border-color .15s ease; }
+.ws-card:hover { transform: none; box-shadow: none; border-color: var(--text-faint); }
+.ws-root button.ws-word { font-size: 25px; }
+.ws-card .ws-phonetic { font-family: var(--font-monospace); font-size: 11px; }
+.ws-root .ws-pill { border-radius: 5px; font-weight: 500; }
+.ws-root button.ws-start { border-radius: 6px; font-size: 13px; padding: 10px 16px; }
+.ws-overview { gap: 28px; }
+.ws-metric strong { font-size: 24px; }
+@media (prefers-reduced-motion: reduce) { .ws-card { transition: none; } }

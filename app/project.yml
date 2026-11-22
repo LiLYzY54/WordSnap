@@ -8,8 +8,8 @@ options:
 
 settings:
   base:
-    MARKETING_VERSION: "1.1.0"
-    CURRENT_PROJECT_VERSION: "1"
+    MARKETING_VERSION: "1.2.0"
+    CURRENT_PROJECT_VERSION: "3"
     SWIFT_VERSION: "5.0"
     MACOSX_DEPLOYMENT_TARGET: "26.0"
     CODE_SIGN_IDENTITY: "-"
@@ -23,6 +23,8 @@ targets:
     sources:
       - path: Sources
         type: group
+      - path: ../LICENSE
+        buildPhase: resources
       - path: Resources
         type: group
         buildPhase: resources

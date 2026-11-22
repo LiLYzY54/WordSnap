@@ -17,16 +17,35 @@ const STATUS_ORDER = ['new', 'learning', 'familiar', 'mastered'];
 const STATUS_LABEL = { new: '新词', learning: '学习中', familiar: '熟悉', mastered: '已掌握' };
 
 const DEFAULT_SETTINGS = {
-  tablePath: 'Projects/Language Learning/English Vocabulary Learning.md',
-  notesFolder: 'Projects/Language Learning/Vocabulary',
+  tablePath: 'English Vocabulary Learning.md',
+  notesFolder: 'Vocabulary',
 };
 
 /* ---------- 工具 ---------- */
 
-function esc(s) {
-  return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({
-    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
-  }[c]));
+/** 与 App 的 NoteWriter.notePath 使用相同的文件名规则。 */
+function notePath(settings, word) {
+  return `${settings.notesFolder.replace(/\/+$/, '')}/${word.replace(/[/:]/g, '-')}.md`;
+}
+
+/** 仅修改文件开头的 frontmatter；正文（包括分隔线）保持原样。 */
+function withStatus(text, status) {
+  const eol = text.includes('\r\n') ? '\r\n' : '\n';
+  const bom = text.startsWith('\uFEFF') ? '\uFEFF' : '';
+  const content = text.slice(bom.length);
+  const opening = /^---[ \t]*\r?\n/.exec(content);
+  if (!opening) return `${bom}---${eol}status: ${status}${eol}---${eol}${content}`;
+
+  const rest = content.slice(opening[0].length);
+  const closing = /^---[ \t]*(?:\r?\n|$)/m.exec(rest);
+  if (!closing) throw new Error('词笔记的属性区缺少结束分隔线，请先修复笔记');
+
+  const frontmatter = rest.slice(0, closing.index);
+  const statusLine = /^(?:status|"status"|'status')[ \t]*:[^\r\n]*(?:\r?\n|$)/m;
+  const updated = statusLine.test(frontmatter)
+    ? frontmatter.replace(statusLine, `status: ${status}${eol}`)
+    : `${frontmatter}status: ${status}${eol}`;
+  return bom + opening[0] + updated + rest.slice(closing.index);
 }
 
 /** 与 App 端 tableRows 相同的解析口径（别名折叠 / 转义竖线保护） */
@@ -72,7 +91,10 @@ class WordSnapView extends obsidian.ItemView {
     this.query = '';
     this.statusFilter = 'all';
     this.words = [];
-    this.review = { queue: [], index: 0, revealed: false };
+    this.review = { queue: [], index: 0, revealed: false, saving: false };
+    this.pendingStatus = new Set();
+    this.loadError = '';
+    this.pathWarning = '';
   }
 
   getViewType() { return VIEW_TYPE; }
@@ -82,13 +104,22 @@ class WordSnapView extends obsidian.ItemView {
   async onOpen() {
     // 表格或词笔记变动时自动刷新（300ms 防抖）
     this._debounce = null;
-    this.registerEvent(this.app.vault.on('modify', (file) => {
+    const isRelevantPath = (path) => {
       const s = this.plugin.settings;
-      if (file.path === s.tablePath || file.path.startsWith(s.notesFolder + '/')) {
-        clearTimeout(this._debounce);
-        this._debounce = setTimeout(() => this.refresh(), 300);
-      }
-    }));
+      return typeof path === 'string' && (path === s.tablePath
+        || path === s.notesFolder || path.startsWith(s.notesFolder + '/'));
+    };
+    const scheduleRefresh = (file, oldPath) => {
+      // 移出已配置位置也需要刷新，所以 rename 同时检查旧路径。
+      if (!isRelevantPath(file.path) && !isRelevantPath(oldPath)) return;
+      clearTimeout(this._debounce);
+      this._debounce = setTimeout(() => this.refresh(), 300);
+    };
+    for (const event of ['create', 'modify', 'delete', 'rename']) {
+      this.registerEvent(this.app.vault.on(event, scheduleRefresh));
+    }
+    // 文件创建可能先于 frontmatter 解析完成，缓存就绪后再更新评分状态。
+    this.registerEvent(this.app.metadataCache.on('changed', (file) => scheduleRefresh(file)));
     await this.refresh();
   }
 
@@ -97,7 +128,14 @@ class WordSnapView extends obsidian.ItemView {
   }
 
   async refresh() {
-    this.words = await this.loadWords();
+    this.loadError = '';
+    this.pathWarning = '';
+    try {
+      this.words = await this.loadWords();
+    } catch (error) {
+      this.words = [];
+      this.loadError = error.message || '词库读取失败，请检查插件设置中的路径及文件访问权限。';
+    }
     this.render();
   }
 
@@ -105,24 +143,19 @@ class WordSnapView extends obsidian.ItemView {
     const s = this.plugin.settings;
     const words = [];
     const file = this.app.vault.getAbstractFileByPath(s.tablePath);
-    if (file) {
-      words.push(...parseTable(await this.app.vault.read(file)));
+    if (!file) {
+      throw new Error(`未找到词汇表：${s.tablePath}。请在 WordSnap 插件设置中填写相对于当前 vault 的表格路径。`);
     }
-    const noteMeta = {};
-    const prefix = s.notesFolder + '/';
-    for (const f of this.app.vault.getMarkdownFiles()) {
-      if (!f.path.startsWith(prefix)) continue;
-      const fm = (this.app.metadataCache.getFileCache(f) || {}).frontmatter || {};
-      noteMeta[fm.word || f.basename] = {
-        status: fm.status || 'new',
-        star: fm.star || '',
-      };
+    words.push(...parseTable(await this.app.vault.read(file)));
+    if (!this.app.vault.getAbstractFileByPath(s.notesFolder)) {
+      this.pathWarning = `未找到词笔记目录：${s.notesFolder}。请检查插件设置中的词笔记目录，或先在 WordSnap 中保存词笔记。`;
     }
     for (const row of words) {
-      const meta = noteMeta[row.word];
-      row.status = meta ? meta.status : 'new';
-      row.star = meta ? meta.star : '';
-      row.hasNote = !!meta;
+      const note = this.app.vault.getAbstractFileByPath(notePath(s, row.word));
+      const fm = note ? (this.app.metadataCache.getFileCache(note) || {}).frontmatter || {} : {};
+      row.status = fm.status || 'new';
+      row.star = fm.star || '';
+      row.hasNote = !!note;
     }
     // 新的在前
     words.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
@@ -138,10 +171,37 @@ class WordSnapView extends obsidian.ItemView {
 
     const total = this.words.length;
     const header = root.createDiv({ cls: 'ws-header' });
-    header.createEl('h2', { text: '📚 WordSnap 词库' });
+    header.createEl('h2', { text: 'WordSnap' });
     header.createSpan({ cls: 'ws-count', text: total ? `${total} 个词` : '' });
     const refreshBtn = header.createEl('button', { cls: 'ws-refresh ws-chip', text: '⟳ 刷新' });
     refreshBtn.onclick = () => this.refresh();
+
+    if (this.loadError) {
+      root.createDiv({ cls: 'ws-config-warning', text: this.loadError });
+      return;
+    }
+    if (this.pathWarning) root.createDiv({ cls: 'ws-config-warning', text: this.pathWarning });
+
+    if (this.tab === 'list') {
+      const hero = root.createDiv({ cls: 'ws-hero' });
+      hero.createDiv({ cls: 'ws-eyebrow', text: 'MY WORD COLLECTION' });
+      hero.createEl('h1', { text: '让遇见的词，留在记忆里。' });
+      hero.createEl('p', { text: '收集阅读中的灵感，用自己的句子记住它。' });
+      const remaining = this.words.filter((w) => w.status !== 'mastered').length;
+      const start = hero.createEl('button', { cls: 'ws-start', text: remaining ? `开始复习 · ${remaining} 个词 →` : '已全部掌握' });
+      start.disabled = !remaining;
+      start.onclick = () => { this.startReview(); this.tab = 'review'; this.render(); };
+      const metrics = hero.createDiv({ cls: 'ws-overview' });
+      for (const [label, count] of [
+        ['收藏单词', total],
+        ['正在学习', this.words.filter((w) => ['learning', 'familiar'].includes(w.status)).length],
+        ['已经掌握', this.words.filter((w) => w.status === 'mastered').length],
+      ]) {
+        const metric = metrics.createDiv({ cls: 'ws-metric' });
+        metric.createEl('strong', { text: String(count) });
+        metric.createSpan({ text: label });
+      }
+    }
 
     const tabs = root.createDiv({ cls: 'ws-tabs' });
     const tabDefs = [
@@ -218,7 +278,7 @@ class WordSnapView extends obsidian.ItemView {
       const card = grid.createDiv({ cls: 'ws-card' });
 
       const top = card.createDiv({ cls: 'ws-card-top' });
-      const wordEl = top.createSpan({ cls: 'ws-word', text: w.word });
+      const wordEl = top.createEl('button', { cls: 'ws-word', text: w.word });
       wordEl.title = '打开词笔记';
       wordEl.onclick = () => this.openNote(w.word);
       top.createEl('button', { cls: 'ws-audio-btn', text: '🔊', title: '朗读' })
@@ -237,15 +297,17 @@ class WordSnapView extends obsidian.ItemView {
         text: STATUS_LABEL[w.status] || w.status || '未标注',
         title: '点击切换状态',
       });
+      pill.disabled = this.pendingStatus.has(notePath(this.plugin.settings, w.word));
       pill.onclick = async () => {
+        if (pill.disabled) return;
+        pill.disabled = true;
         const next = STATUS_ORDER[(STATUS_ORDER.indexOf(w.status) + 1) % STATUS_ORDER.length];
-        await this.setStatus(w.word, next);
-        w.status = next;
+        if (await this.setStatus(w.word, next)) w.status = next;
         this.renderCardGrid();
       };
       foot.createSpan({ cls: 'ws-date', text: w.date || '' });
       if (w.hasNote) {
-        const link = foot.createSpan({ cls: 'ws-note-link', text: '笔记 →' });
+        const link = foot.createEl('button', { cls: 'ws-note-link', text: '笔记 →' });
         link.onclick = () => this.openNote(w.word);
       }
     }
@@ -257,7 +319,7 @@ class WordSnapView extends obsidian.ItemView {
     const queue = this.words
       .filter((w) => w.status !== 'mastered')
       .sort((a, b) => (a.date || '').localeCompare(b.date || '')); // 最旧的先复习
-    this.review = { queue, index: 0, revealed: false };
+    this.review = { queue, index: 0, revealed: false, saving: false };
   }
 
   renderReview(container) {
@@ -300,13 +362,25 @@ class WordSnapView extends obsidian.ItemView {
       const gradeDefs = [
         ['不认识', 'new'], ['模糊', 'learning'], ['认识', 'familiar'], ['已掌握', 'mastered'],
       ];
+      const buttons = [];
       for (const [label, status] of gradeDefs) {
         const btn = grades.createEl('button', { cls: 'ws-grade', text: label });
+        buttons.push(btn);
+        btn.disabled = !!r.saving;
         btn.onclick = async () => {
-          await this.setStatus(w.word, status);
-          r.index += 1;
-          r.revealed = false;
-          this.render();
+          if (r.saving || this.review !== r || r.queue[r.index] !== w) return;
+          // 在第一个 await 前锁住本张卡，连点不同评分也只提交一次。
+          r.saving = true;
+          buttons.forEach((button) => { button.disabled = true; });
+          try {
+            if (await this.setStatus(w.word, status)) {
+              r.index += 1;
+              r.revealed = false;
+            }
+          } finally {
+            r.saving = false;
+            this.render();
+          }
         };
       }
     }
@@ -394,36 +468,37 @@ class WordSnapView extends obsidian.ItemView {
   }
 
   async openNote(word) {
-    await this.app.workspace.openLinkText(word, '', false);
-  }
-
-  /** 评分回写：只改词笔记 frontmatter 里的 status 行 */
-  async setStatus(word, status) {
-    const path = `${this.plugin.settings.notesFolder}/${word}.md`;
+    const path = notePath(this.plugin.settings, word);
     const file = this.app.vault.getAbstractFileByPath(path);
     if (!file) {
-      new obsidian.Notice(`词笔记不存在：${path}（保存时未生成）`);
-      return;
+      new obsidian.Notice(`词笔记不存在：${path}。请检查词笔记目录，或在 WordSnap 中再次保存该词。`);
+      return false;
     }
-    const text = await this.app.vault.read(file);
-    const lines = text.split('\n');
-    let inFm = false, fences = 0, done = false;
-    for (let i = 0; i < lines.length; i++) {
-      if (lines[i].trim() === '---') {
-        fences++;
-        if (fences === 1) { inFm = true; continue; }
-        break; // 第二个 --- 即 frontmatter 结束
-      }
-      if (inFm && /^status:/.test(lines[i])) {
-        lines[i] = `status: ${status}`;
-        done = true;
-        break;
-      }
+    await this.app.workspace.getLeaf(false).openFile(file);
+    return true;
+  }
+
+  /** 持久化成功才返回 true；失败时保留当前卡片和内存状态，允许重试。 */
+  async setStatus(word, status) {
+    const path = notePath(this.plugin.settings, word);
+    if (this.pendingStatus.has(path)) return false;
+    const file = this.app.vault.getAbstractFileByPath(path);
+    if (!file) {
+      new obsidian.Notice(`词笔记不存在：${path}。请检查词笔记目录，或在 WordSnap 中再次保存该词。`);
+      return false;
     }
-    if (done) {
-      await this.app.vault.modify(file, lines.join('\n'));
+    this.pendingStatus.add(path);
+    try {
+      // 在同一次原子操作中读取并更新，避免用旧快照覆盖其他编辑器的新内容。
+      await this.app.vault.process(file, (text) => withStatus(text, status));
       const row = this.words.find((x) => x.word === word);
       if (row) row.status = status;
+      return true;
+    } catch (error) {
+      new obsidian.Notice(`状态未保存：${error.message || '写入失败'}。请检查笔记后重试。`);
+      return false;
+    } finally {
+      this.pendingStatus.delete(path);
     }
   }
 }
@@ -443,6 +518,7 @@ class WordSnapPlugin extends obsidian.Plugin {
       callback: () => this.activateView(),
     });
     this.addSettingTab(new WordSnapSettingTab(this.app, this));
+    this.registerObsidianProtocolHandler('wordsnap', () => this.activateView());
 
     // 启动即展示词库仪表盘（尚未打开时）：打开 Obsidian 就看见自己的词库
     this.app.workspace.onLayoutReady(() => {
@@ -459,7 +535,7 @@ class WordSnapPlugin extends obsidian.Plugin {
     let leaf = null;
     for (const l of workspace.getLeavesOfType(VIEW_TYPE)) { leaf = l; break; }
     if (!leaf) {
-      leaf = workspace.getRightLeaf(false);
+      leaf = workspace.getLeaf('tab');
       await leaf.setViewState({ type: VIEW_TYPE, active: true });
     }
     workspace.revealLeaf(leaf);
@@ -478,7 +554,7 @@ class WordSnapSettingTab extends obsidian.PluginSettingTab {
     containerEl.empty();
     containerEl.createEl('h3', { text: 'WordSnap 词库' });
     containerEl.createEl('p', {
-      text: '路径相对于当前 vault。默认值对应 WordSnap 的 ~/.wordsnap.json 配置。',
+      text: '路径相对于当前 vault。默认表格为根目录的 English Vocabulary Learning.md，词笔记为 Vocabulary。若在 WordSnap App 中选择了其他位置，请在这里填写对应路径。',
       cls: 'setting-item-description',
     });
 

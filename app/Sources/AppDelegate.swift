@@ -47,7 +47,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         // 启动即预热直连：首次呼出查词就已接近即时
-        Task { WordService.YoudaoDirectClient.shared.warmUp() }
+        Task { await WordService.YoudaoDirectClient.shared.warmUp() }
 
         // Debug helper: WORDSNAP_AUTOSHOW=1 opens the panel on launch;
         // WORDSNAP_AUTOSHOW=lookup also runs a lookup for visual tests.

@@ -25,22 +25,20 @@ final class Pronouncer {
     func play(_ word: String) {
         Task { [weak self] in
             guard let self, let data = await Self.fetchAudio(word) else { return }
-            await MainActor.run {
-                self.player = try? AVAudioPlayer(data: data)
-                self.player?.prepareToPlay()
-                self.player?.play()
-            }
+            self.player = try? AVAudioPlayer(data: data)
+            self.player?.prepareToPlay()
+            self.player?.play()
         }
     }
 
-    private nonisolated static func fetchAudio(_ word: String) async -> Data? {
+    private static func fetchAudio(_ word: String) async -> Data? {
         if let cached = audioCache.object(forKey: word as NSString) {
             return cached as Data
         }
-        let query = word.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? word
-        guard let url = URL(string: "https://dict.youdao.com/dictvoice?type=2&audio=\(query)") else {
-            return nil
-        }
+        var components = URLComponents(string: "https://dict.youdao.com/dictvoice")!
+        components.queryItems = [URLQueryItem(name: "type", value: "2"),
+                                 URLQueryItem(name: "audio", value: word)]
+        guard let url = components.url else { return nil }
         let config = URLSessionConfiguration.ephemeral
         config.timeoutIntervalForRequest = 6
         config.timeoutIntervalForResource = 10

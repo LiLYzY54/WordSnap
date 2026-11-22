@@ -246,6 +246,11 @@ final class FloatingWindow: NSPanel {
 
     override var canBecomeKey: Bool { true }
 
+    override func orderOut(_ sender: Any?) {
+        model.reset()
+        super.orderOut(sender)
+    }
+
     func toggle() {
         NSLog("WordSnap [toggle] visible=%d", isVisible ? 1 : 0)
         if isVisible {
@@ -264,7 +269,7 @@ final class FloatingWindow: NSPanel {
 
     private func showPanel() {
         // 预热直连，让首查就命中活连接
-        Task { WordService.YoudaoDirectClient.shared.warmUp() }
+        Task { await WordService.YoudaoDirectClient.shared.warmUp() }
         // Every summon starts from a fresh capsule — no leftover results.
         model.reset()
         model.prefillFromClipboard()

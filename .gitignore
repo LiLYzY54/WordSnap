@@ -3,6 +3,12 @@ build/
 *.xcuserstate
 xcuserdata/
 dist/
+.env
+.env.*
+!.env.example
+.wordsnap.json
+*.p12
+*.mobileprovision
 
 # Xcode 工程由 xcodegen 从 project.yml 生成：改 project.yml 后执行
 # `cd app && xcodegen generate` 即可重建，不要直接编辑工程文件
