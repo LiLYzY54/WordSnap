@@ -8,32 +8,75 @@
 
 macOS 桌面应用：快捷键呼出悬浮窗 → 查询单词 → 保存到 Obsidian。
 
-[macOS 13+ 兼容测试版 v1.2.1-beta.1](https://github.com/LiLYzY54/WordSnap/releases/tag/v1.2.1-beta.1)：
-macOS 26 及以上使用 Liquid Glass，macOS 13–15 自动使用传统毛玻璃，查词与保存功能相同。
-**尚未在 macOS 13–15 真机或虚拟机实测，也未在 Intel 真机验证，欢迎协助测试。**
-正式版 v1.2.0 安装包仍要求 macOS 26+。
-
 读英文时，复制一个生词，按 `⌘L` 查清意思，再按 `⌘Enter` 保存。每个词都是
 自己的 Markdown 笔记，可以补充语境、例句，也可以在配套 Obsidian 插件里翻卡复习。
 
 原生 Swift App（SwiftUI + URLSession），无需 Python 或第三方 Swift 运行时依赖。
 
-[下载最新版](https://github.com/LiLYzY54/WordSnap/releases/latest) ·
+[下载正式版](https://github.com/LiLYzY54/WordSnap/releases/tag/v1.2.0) ·
+[下载 macOS 13+ 兼容测试版](https://github.com/LiLYzY54/WordSnap/releases/download/v1.2.1-beta.1/WordSnap-1.2.1-beta.1-universal.zip) ·
 [反馈问题](https://github.com/LiLYzY54/WordSnap/issues) · [MIT 开源许可](LICENSE)
+
+## 下载哪个版本？
+
+| 版本 | 系统要求或兼容目标 | 下载 |
+| --- | --- | --- |
+| **正式版 v1.2.0** | 要求 macOS 26 或更新版本 | [正式版下载页](https://github.com/LiLYzY54/WordSnap/releases/tag/v1.2.0)（DMG / ZIP） |
+| **兼容测试版 v1.2.1-beta.1** | 目标为 macOS 13+，旧系统兼容性待用户验证 | [直接下载测试版 ZIP](https://github.com/LiLYzY54/WordSnap/releases/download/v1.2.1-beta.1/WordSnap-1.2.1-beta.1-universal.zip)（约 2.5 MB）· [版本说明](https://github.com/LiLYzY54/WordSnap/releases/tag/v1.2.1-beta.1) |
+
+两个版本的安装包均为 Universal，同时包含 Apple Silicon 和 Intel 架构，**无需按芯片分别下载**。
+但包含 Intel 架构不代表所有 Intel Mac 或旧系统都已验证可用。
+目前不支持 macOS 12 及更早版本。
+
+### 兼容测试版：请先了解验证范围
+
+**v1.2.1-beta.1 是预发布测试版，尚未在 macOS 13、14、15 的真机或虚拟机上实测，也未在 Intel 真机验证。**
+
+- macOS 13–15 会使用传统毛玻璃窗口和普通强调按钮；macOS 26 及以上保留 Liquid Glass。
+- 已在 Apple M4、macOS 27.3 开发机上完成双架构构建、最低系统标记检查、74 项 Swift 测试、
+  29 项插件测试和 8 个迁移场景，以及联网查词、临时词库写入和表格撤销检查。
+- 上述结果不能替代旧系统实测。欢迎旧系统用户协助试用；如果目前正在使用正式版且运行正常，可以继续使用正式版。
+
+测试版附件名为 `WordSnap-1.2.1-beta.1-universal.zip`；包内版本号是 **1.2.1，构建号 4**。
+请下载 App ZIP，不要下载 GitHub 自动生成的 **Source code** 压缩包。
+[测试版 SHA-256 校验文件](https://github.com/LiLYzY54/WordSnap/releases/download/v1.2.1-beta.1/WordSnap-1.2.1-beta.1-SHA256SUMS.txt)
+可用于核对下载文件。
 
 ## 安装与首次使用
 
-1. 需要 **macOS 26 或更新版本**。在 Releases 下载 `WordSnap-1.2.0.dmg`，
-   打开后把 WordSnap 拖进「应用程序」。也可下载 ZIP 解压使用。
-   v1.2.0 安装包为 Universal，包含 Apple Silicon 与 Intel 架构；Intel Mac 仍需支持 macOS 26。
+1. 按上表选择版本。退出正在运行的 WordSnap；下载 DMG 后打开并将 WordSnap 拖进「应用程序」，
+   下载 ZIP 则先解压，再将 `WordSnap.app` 放入「应用程序」。兼容测试版目前提供 ZIP。
 2. 当前发行包为 ad-hoc 签名，**尚未经过 Apple 公证**，macOS 可能阻止首次打开。
    请确认下载来源；也可按下方开发说明从源码构建。
 3. 启动后从菜单栏进入「设置…」，把词汇表路径设到自己的 Obsidian vault 内，
    例如 `<你的 vault>/English Vocabulary Learning.md`。查词本身不要求安装 Obsidian。
+   **试用兼容测试版时，建议先选择临时词库，或备份原词库。**
 4. 复制一个英文单词 → `⌘L` → `Enter` 查词 → `⌘Enter` 保存。
    默认快捷键如与其他工具冲突，可在设置里重新录制。
 
 App 常驻菜单栏，不显示 Dock 图标。`Esc` 可收起查词面板。
+配套 Obsidian 插件本次没有改动，可继续使用 v1.2.0 插件。
+
+## 帮忙测试与反馈
+
+请重点试试：能否启动并出现菜单栏图标，快捷键能否呼出/收起窗口，查词、发音、保存和撤销是否正常，
+以及毛玻璃背景、文字、按钮和设置窗口是否显示正常。有条件也欢迎检查浅色/深色模式及登录时启动。
+
+测试后请到 [GitHub Issues 反馈](https://github.com/LiLYzY54/WordSnap/issues/new)，
+标题可以写 `[兼容测试] macOS 版本 + 测试通过/问题描述`，并附上以下信息。
+**系统版本和芯片型号可在苹果菜单 →「关于本机」中查看；请提供完整版本号，而不只是“老系统”。**
+
+```text
+macOS 完整版本：（例如 13.6.9 / 14.7.1 / 15.1）
+芯片型号：（例如 Apple M1 / M2 / M3，或 Intel Core i5 / i7）
+WordSnap 版本：v1.2.1-beta.1（1.2.1，构建 4）
+是否能启动：
+已测试功能及结果：
+如有异常：操作步骤、预期结果、实际结果、报错文字或截图
+```
+
+**即使全部正常，也欢迎反馈系统版本、芯片型号和已测试项目**，帮助我们确认兼容范围。
+附截图或日志时，请先去除私人词库和笔记内容。
 
 ## 快捷键
 
