@@ -569,7 +569,10 @@ final class WordService {
             }
             let conn = NWConnection(host: .ipv4(address), port: 443, using: NWParameters(tls: tlsOptions))
 
-            return try await withCheckedThrowingContinuation { continuation in
+            // Only signal readiness across the continuation. NWConnection's
+            // Sendable conformance requires macOS 14; the connection itself
+            // stays local until readiness (or timeout/failure) is resolved.
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
                 let completion = OneShotContinuation(continuation)
                 let timer = DispatchWorkItem {
                     completion.resume(with: .failure(URLError(.timedOut))) {
@@ -583,7 +586,7 @@ final class WordService {
                     switch state {
                     case .ready:
                         timer.cancel()
-                        completion.resume(with: .success(conn)) {
+                        completion.resume(with: .success(())) {
                             conn.stateUpdateHandler = nil
                         }
                     case .failed(let error):
@@ -601,6 +604,7 @@ final class WordService {
                 }
                 conn.start(queue: queue)
             }
+            return conn
         }
 
         /// Body 分帧决策依据 RFC 7230：chunked 存在时优先于 Content-Length。

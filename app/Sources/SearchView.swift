@@ -6,6 +6,7 @@ import SwiftUI
 struct RootSearchView: View {
 
     @ObservedObject var model: SearchModel
+    var preferLiquidGlass = true
     let onHeightChange: (CGFloat) -> Void
 
     @FocusState private var focused: Bool
@@ -29,7 +30,7 @@ struct RootSearchView: View {
             }
         )
         .onPreferenceChange(ContentHeightKey.self) { onHeightChange($0) }
-        .onChange(of: model.selectAllToken) { _, _ in
+        .onChange(of: model.selectAllToken) { _ in
             // 等字段编辑器（NSText）就位后全选：预填后直接输入即替换
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
                 (NSApp.keyWindow?.firstResponder as? NSText)?.selectAll(nil)
@@ -52,13 +53,21 @@ struct RootSearchView: View {
 
     // MARK: Search bar
 
+    private var searchPrompt: Text {
+        let text = Text("Type a word, leave a trace…")
+        if #available(macOS 14.0, *) {
+            return text.foregroundStyle(.tertiary)
+        }
+        return text.foregroundColor(Color(nsColor: .tertiaryLabelColor))
+    }
+
     private var searchBar: some View {
         HStack(spacing: 10) {
             Image(systemName: "magnifyingglass")
                 .font(.system(size: 18, weight: .medium))
                 .foregroundStyle(.secondary)
 
-                TextField("搜索", text: $model.searchText, prompt: Text("Type a word, leave a trace…").foregroundStyle(.tertiary))
+                TextField("搜索", text: $model.searchText, prompt: searchPrompt)
                     .textFieldStyle(.plain)
                     .font(.system(size: 22, weight: .medium))
                     .focused($focused)
@@ -223,7 +232,7 @@ struct RootSearchView: View {
                             .font(.system(size: 12, weight: .semibold))
                             .padding(.horizontal, 8)
                             .padding(.vertical, 3)
-                            .background(.blue.opacity(0.15), in: .rect(cornerRadius: 6))
+                            .background(.blue.opacity(0.15), in: RoundedRectangle(cornerRadius: 6))
                             .foregroundStyle(.blue)
                     }
                     Text(entry.meaning)
@@ -260,14 +269,22 @@ struct RootSearchView: View {
         }
     }
 
+    @ViewBuilder
     private var saveButton: some View {
+        if #available(macOS 26.0, *), preferLiquidGlass {
+            saveButtonContent.buttonStyle(.glassProminent)
+        } else {
+            saveButtonContent.buttonStyle(.borderedProminent)
+        }
+    }
+
+    private var saveButtonContent: some View {
         Button {
             model.save()
         } label: {
             Label("保存", systemImage: "square.and.arrow.down.fill")
                 .font(.system(size: 13, weight: .medium))
         }
-        .buttonStyle(.glassProminent)
         .keyboardShortcut(.return, modifiers: .command)
     }
 }

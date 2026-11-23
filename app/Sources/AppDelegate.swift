@@ -10,7 +10,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         hotkeyManager = HotkeyManager()
+        #if DEBUG
+        // Preview the pre-macOS 26 material on a newer development machine.
+        floatingWindow = FloatingWindow(
+            preferLiquidGlass: ProcessInfo.processInfo.environment["WORDSNAP_TRADITIONAL_MATERIAL"] != "1"
+        )
+        #else
         floatingWindow = FloatingWindow()
+        #endif
 
         // 全局热键：默认 ⌘L，可在设置窗口改（持久化 UserDefaults）
         hotkeyManager.register(config: HotkeyManager.stored) { [weak self] in

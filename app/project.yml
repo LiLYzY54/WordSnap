@@ -2,16 +2,18 @@ name: WordSnap
 options:
   bundleIdPrefix: com.wordsnap
   deploymentTarget:
-    macOS: "26.0"
+    macOS: "13.0"
   xcodeVersion: "26.0"
   generateEmptyDirectories: true
 
 settings:
   base:
-    MARKETING_VERSION: "1.2.0"
-    CURRENT_PROJECT_VERSION: "3"
+    MARKETING_VERSION: "1.2.1"
+    CURRENT_PROJECT_VERSION: "4"
     SWIFT_VERSION: "5.0"
-    MACOSX_DEPLOYMENT_TARGET: "26.0"
+    MACOSX_DEPLOYMENT_TARGET: "13.0"
+    ARCHS: "$(ARCHS_STANDARD)"
+    ONLY_ACTIVE_ARCH: NO
     CODE_SIGN_IDENTITY: "-"
     CODE_SIGN_STYLE: Manual
     ENABLE_HARDENED_RUNTIME: YES
@@ -48,6 +50,8 @@ targets:
     settings:
       base:
         GENERATE_INFOPLIST_FILE: YES
+        # Xcode 26's XCTest runtime requires macOS 14; the app still targets 13.
+        MACOSX_DEPLOYMENT_TARGET: "14.0"
         PRODUCT_BUNDLE_IDENTIFIER: com.wordsnap.app.tests
         TEST_HOST: "$(BUILT_PRODUCTS_DIR)/WordSnap.app/Contents/MacOS/WordSnap"
         BUNDLE_LOADER: "$(TEST_HOST)"

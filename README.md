@@ -6,7 +6,12 @@
 
 **随手捕捉单词，留进自己的词库。**
 
-macOS 桌面应用：快捷键呼出 Liquid Glass 悬浮窗 → 查询单词 → 保存到 Obsidian。
+macOS 桌面应用：快捷键呼出悬浮窗 → 查询单词 → 保存到 Obsidian。
+
+[macOS 13+ 兼容测试版 v1.2.1-beta.1](https://github.com/LiLYzY54/WordSnap/releases/tag/v1.2.1-beta.1)：
+macOS 26 及以上使用 Liquid Glass，macOS 13–15 自动使用传统毛玻璃，查词与保存功能相同。
+**尚未在 macOS 13–15 真机或虚拟机实测，也未在 Intel 真机验证，欢迎协助测试。**
+正式版 v1.2.0 安装包仍要求 macOS 26+。
 
 读英文时，复制一个生词，按 `⌘L` 查清意思，再按 `⌘Enter` 保存。每个词都是
 自己的 Markdown 笔记，可以补充语境、例句，也可以在配套 Obsidian 插件里翻卡复习。
@@ -88,7 +93,7 @@ App 常驻菜单栏，不显示 Dock 图标。`Esc` 可收起查词面板。
 
 ## 技术栈
 
-- Swift 5 + SwiftUI（macOS 26 Liquid Glass 质感）
+- Swift 5 + SwiftUI（macOS 13+；macOS 26+ 使用 Liquid Glass，旧系统使用 AppKit 毛玻璃）
 - 有道词典 JSON API（`dict.youdao.com/jsonapi`，免费无需 Key）
 - XcodeGen 构建工程
 - 全局快捷键：Carbon `RegisterEventHotKey`（可配置、可持久化）
@@ -124,9 +129,24 @@ node --test obsidian-plugin/tests/*.test.cjs
 改构建配置请编辑 `app/project.yml` 后在 `app/` 下执行 `xcodegen generate`，
 不要手工编辑工程文件。架构细节见 `SPEC.md`。
 
+构建仍需 Xcode 26+（使用 Liquid Glass SDK），运行只需 macOS 13+。
+默认构建同时包含 Apple Silicon 和 Intel；最低系统版本由 `MACOSX_DEPLOYMENT_TARGET`
+统一控制，生成的 Info.plist 自动使用同一值。
+
+在新系统预览旧版毛玻璃（仅 Debug 构建生效）：
+
+```bash
+WORDSNAP_TRADITIONAL_MATERIAL=1 WORDSNAP_AUTOSHOW=lookup \
+  ~/Library/Developer/Xcode/WordSnap/DerivedData/Build/Products/Debug/WordSnap.app/Contents/MacOS/WordSnap
+```
+
+转为正式版前仍需在 macOS 13 真机或虚拟机验证启动、快捷键、查词、发音、保存/撤销、
+设置与登录启动；新系统上的兼容分支测试不能代替旧系统实测。
+Xcode 26 的 XCTest 运行库要求 macOS 14+，因此测试包以 14 为最低版本，App 仍以 13 为最低版本。
+
 ## 注意
 
-- 需要 macOS 26 及以上系统
+- 当前源码需要 macOS 13 及以上；已发布的 v1.2.0 安装包仍需要 macOS 26 及以上
 - 应用为常驻辅助进程（LSUIElement），不会出现在 Dock；快捷键无效时请检查系统设置中的应用权限
 
 ## 数据与网络

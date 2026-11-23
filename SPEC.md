@@ -5,7 +5,7 @@
 
 ## 概述
 
-**功能**: 全局快捷键呼出 Liquid Glass 悬浮窗 → 输入单词 → 在线查词预览 → 确认后追加到 Obsidian 词汇表。
+**功能**: 全局快捷键呼出悬浮窗 → 输入单词 → 在线查词预览 → 确认后追加到 Obsidian 词汇表。
 **目标用户**: 在 Mac 上阅读英文内容时需要即时查词并归档到 Obsidian 的用户。
 
 ## 技术栈与关键决策
@@ -13,7 +13,7 @@
 | 组件 | 选型 | 决策原因 |
 |------|------|---------|
 | 应用壳 | Swift + AppKit，`LSUIElement` 常驻 | 无外部依赖、无 Python 进程开销 |
-| 悬浮窗 | `NSPanel` + `NSGlassEffectView`（macOS 26 Liquid Glass） | 单块玻璃胶囊 ↔ 结果面板液态变形 |
+| 悬浮窗 | `NSPanel` + `PanelBackgroundView`（26+ Liquid Glass，13–15 原生毛玻璃） | 按系统切换材质，共享内容、圆角与展开动画 |
 | 查词 API | 有道词典 `dict.youdao.com/jsonapi` | 免费、无 Key、含柯林斯/例句 |
 | 直连层 | `NWConnection` 手写 HTTP/1.1 + actor 隔离 | 绕开 TUN 代理 fake-IP DNS，连接复用近零延迟 |
 | 快捷键 | Carbon `RegisterEventHotKey` (⌘L) | 系统级全局热键 |
@@ -30,6 +30,7 @@ app/Sources/
 ├── SettingsWindow.swift     # 设置窗口：快捷键录制 / Obsidian 路径选择
 ├── StatusBarController.swift# 菜单栏：今日一词 / 热力图 / 呼出面板 / 设置 / 登录项 / 退出
 ├── FloatingWindow.swift     # NSPanel + 玻璃容器；胶囊↔面板形变；Esc 拦截；剪贴板预填
+├── PanelBackgroundView.swift# 26+ NSGlassEffectView / 13–15 NSVisualEffectView，版本检查隔离新 API
 ├── SearchView.swift         # SwiftUI 界面（结果、保存、部分失败与重试）
 ├── SearchModel.swift        # 查询任务/计时器生命周期、保存及路径绑定的撤销凭据
 ├── Pronouncer.swift         # 有道 dictvoice 美音（预取缓存 + AVAudioPlayer）

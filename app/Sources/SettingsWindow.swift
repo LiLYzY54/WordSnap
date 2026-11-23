@@ -29,7 +29,7 @@ struct SettingsView: View {
                         .font(.system(size: 15, weight: .semibold, design: .monospaced))
                         .padding(.horizontal, 12)
                         .padding(.vertical, 6)
-                        .background(.quaternary, in: .rect(cornerRadius: 6))
+                        .background(.quaternary, in: RoundedRectangle(cornerRadius: 6))
                     Button(model.isRecording ? "按下新快捷键…（Esc 取消）" : "录制…") {
                         model.isRecording ? model.onCancelRecording?() : model.onStartRecording?()
                     }

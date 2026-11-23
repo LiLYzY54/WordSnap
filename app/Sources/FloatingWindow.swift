@@ -58,10 +58,11 @@ final class FloatingWindow: NSPanel {
 
         private func ringPath(inset: CGFloat) -> CGPath {
             let r = max(0, cornerRadius - inset)
-            return NSBezierPath(
-                roundedRect: bounds.insetBy(dx: inset, dy: inset),
-                xRadius: r, yRadius: r
-            ).cgPath
+            let rect = bounds.insetBy(dx: inset, dy: inset)
+            if #available(macOS 14.0, *) {
+                return NSBezierPath(roundedRect: rect, xRadius: r, yRadius: r).cgPath
+            }
+            return CGPath(roundedRect: rect, cornerWidth: r, cornerHeight: r, transform: nil)
         }
 
         /// 纯装饰层：绝不拦截玻璃内容层的鼠标事件
@@ -74,7 +75,7 @@ final class FloatingWindow: NSPanel {
     /// Spotlight-like corner radius (≈0.45 × bar height) for both states.
     private static let panelCornerRadius: CGFloat = 30
 
-    private let glass = NSGlassEffectView()
+    private let glass: PanelBackgroundView
     private let edgeStrokes = EdgeStrokeView(frame: .zero)
     /// Clips every layer (including the glass) to the panel's rounded shape,
     /// so nothing can paint into the square window corners.
@@ -88,7 +89,8 @@ final class FloatingWindow: NSPanel {
 
     let model = SearchModel()
 
-    init() {
+    init(preferLiquidGlass: Bool = true) {
+        glass = PanelBackgroundView(preferLiquidGlass: preferLiquidGlass)
         super.init(
             contentRect: NSRect(x: 0, y: 0, width: 680, height: Self.barOnlyHeight),
             styleMask: [.borderless],
@@ -107,15 +109,15 @@ final class FloatingWindow: NSPanel {
 
         clipContainer.wantsLayer = true
 
-        // Single native Liquid Glass piece: the capsule morphs into the
-        // result panel with a liquid spring animation.
-        glass.style = .regular // 标准玻璃：白背景下也能看清面板
-        glass.contentView = NSHostingView(
+        // macOS 26 retains Liquid Glass; earlier systems use native vibrancy.
+        // Both materials share the same content, clipping and resize animation.
+        glass.setContentView(NSHostingView(
             rootView: RootSearchView(
                 model: model,
+                preferLiquidGlass: preferLiquidGlass,
                 onHeightChange: { [weak self] height in self?.applyContentHeight(height) }
             )
-        )
+        ))
         clipContainer.addSubview(glass)
         glass.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
